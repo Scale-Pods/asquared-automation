@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+/* ─── Cross-browser range input (used in audio player) ─────────────────────
+   `appearance: none` removes all native chrome but also hides the thumb in
+   Firefox and misaligns it in Safari. These pseudo-element rules restore a
+   consistent, on-brand thumb across every browser.
+   Webkit  → Chrome, Safari, Edge (Chromium), Brave
+   Mozilla → Firefox
+──────────────────────────────────────────────────────────────────────────── */
+
+input[type="range"] {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+}
+
+/* Track — webkit (Chrome / Safari / Edge / Brave) */
+input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 9999px;
+    /* background is set via inline style on each instance for live gradient */
+    background: transparent;
+}
+
+/* Thumb — webkit */
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #2563eb;
+    border: 2px solid #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    margin-top: -4px;
+    /* vertically centre thumb on the track */
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
+}
+
+/* Track — Firefox */
+input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 9999px;
+    background: transparent;
+}
+
+/* Thumb — Firefox */
+input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #2563eb;
+    border: 2px solid #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
+}
+
+/* Focus ring (accessibility) */
+input[type="range"]:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* Email Content Rendering Styles */
+.email-content {
+    word-break: break-word;
+}
+
+.email-content p {
+    margin-bottom: 1em;
+}
+
+.email-content h1,
+.email-content h2,
+.email-content h3,
+.email-content h4 {
+    font-weight: 700;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    line-height: 1.2;
+}
+
+.email-content h1 {
+    font-size: 1.5rem;
+}
+
+.email-content h2 {
+    font-size: 1.25rem;
+}
+
+.email-content h3 {
+    font-size: 1.125rem;
+}
+
+.email-content ul {
+    list-style-type: disc;
+    margin-left: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.email-content ol {
+    list-style-type: decimal;
+    margin-left: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.email-content blockquote {
+    border-left: 4px solid #e2e8f0;
+    padding-left: 1rem;
+    margin-left: 0;
+    font-style: italic;
+    color: #64748b;
+}
+
+.email-content a {
+    color: #2563eb;
+    text-decoration: underline;
+}
+
+.email-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.5rem;
+}
+
+.email-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+    border: none !important;
+}
+
+.email-content th,
+.email-content td {
+    padding: 2px 4px;
+    text-align: left;
+    vertical-align: top;
+    border: none !important;
+    background: transparent !important;
+}
+
+.email-content th {
+    background-color: #f8fafc;
+}

@@ -1,0 +1,43 @@
+**/node_modules/
+**/venv/
+**/*.sst
+**/*.meta
+# Dependencies (The big folders causing the 10k error)
+node_modules/
+jspm_packages/
+venv/
+env/
+.env
+.env.local
+bin/
+share/
+
+# Build and Output
+dist/
+build/
+out/
+.next/
+*.exe
+*.dll
+*.so
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Logs and databases
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+*.sqlite
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace

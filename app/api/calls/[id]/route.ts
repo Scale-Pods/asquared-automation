@@ -16,8 +16,9 @@ export async function GET(
         if (supabaseUrl && secretKey) {
             try {
                 const headers = { "apikey": secretKey, "Authorization": `Bearer ${secretKey}` };
-                const tables = ["nr_wf", "followup", "nurture"];
+                const tables = ["leads", "owner_reachout", "owner_outreach"];
                 const results = await Promise.all(tables.map(t => fetch(`${supabaseUrl.replace(/\/$/, "")}/rest/v1/${t}?select=name,phone`, { headers }).then(r => r.json())));
+
                 results.forEach(data => {
                     if (Array.isArray(data)) {
                         data.forEach(l => {

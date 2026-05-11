@@ -71,25 +71,27 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
 
     // Lean column selection for list view
     // Fetch specific columns based on schema. User added assistantId and type columns.
-    const columns = 'id,started_at,customer_phone,customer_name,duration_seconds,status,cost_usd,source,transcript,summary,recording_url,vapi_account,assistantId,type';
+    const columns = 'id,created_at,customer_phone,customer_name,duration_seconds,status,cost_usd,source,transcript,summary,recording_url,vapi_account,assistantId,type';
+
     const BATCH_SIZE = 1000;
 
     // Build date filter
     let dateFilter = '';
-    if (fromDate) dateFilter += `&started_at=gte.${fromDate.toISOString()}`;
+    if (fromDate) dateFilter += `&created_at=gte.${fromDate.toISOString()}`;
     if (toDate) {
         const endOfRange = new Date(toDate);
         if (endOfRange.getUTCHours() === 0 && endOfRange.getUTCMinutes() === 0 && endOfRange.getUTCSeconds() === 0) {
             endOfRange.setUTCHours(23, 59, 59, 999);
         }
-        dateFilter += `&started_at=lte.${endOfRange.toISOString()}`;
+        dateFilter += `&created_at=lte.${endOfRange.toISOString()}`;
     }
+
 
     const normalizeRow = (d: any) => {
         const dur = d.duration_seconds || 0;
         const costVal = d.cost_usd ?? 0;
         const ph = d.customer_phone || 'Unknown';
-        
+
         const aid = d.assistantId || null;
         const UAE_BOT_ID = '70f05e16-18f3-4f6e-964a-f47b299c6c1d';
 
@@ -108,7 +110,8 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
 
         return {
             id: d.id,
-            startedAt: d.started_at,
+            startedAt: d.created_at || d.started_at,
+
             durationSeconds: dur,
             costValue: costVal,
             cost: `$${Number(costVal).toFixed(3)}`,
@@ -119,15 +122,16 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
             transcript: d.transcript || '',
             recordingUrl: d.recording_url || '',
             // Map various Vapi success statuses to 'answered' for the dashboard filter
-            status: (d.status === 'ended' || d.status === 'customer-ended-call' || d.status === 'assistant-ended-call' || d.status === 'voicemail') 
-                ? 'answered' 
+            status: (d.status === 'ended' || d.status === 'customer-ended-call' || d.status === 'assistant-ended-call' || d.status === 'voicemail')
+                ? 'answered'
                 : (d.status || 'answered'),
             type: isInbound ? "Inbound" : "Outbound",
             isInbound,
             country: getRateInfo(ph)?.Country || 'Unknown',
             source: 'vapi',
-            vapiAccount: aid === '682cf6ae-23fd-44f3-a4a3-756998cd62c1' ? 'owners' : (d.vapi_account || 'normal'),
+            vapiAccount: aid === '682cf6ae-23fd-44f3-a4a3-756998cd62c1' ? 'owners' : 'normal',
             vapiStatus: d.status,
+
             assistantId: aid,
             endedReason: null,
             breakdown: { agent: costVal, telephony: 0, total: costVal },
@@ -136,7 +140,8 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
     };
 
     try {
-        const countUrl = `${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=started_at.desc&limit=${BATCH_SIZE}&offset=0`;
+        const countUrl = `${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=0`;
+
         const countRes = await fetch(countUrl, { headers: { ...headers, 'Prefer': 'count=exact' } });
 
         if (!countRes.ok) return [];
@@ -157,7 +162,7 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
 
         const remainingBatches: Promise<any[]>[] = [];
         for (let offset = BATCH_SIZE; offset < totalCount; offset += BATCH_SIZE) {
-            const batchUrl = `${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=started_at.desc&limit=${BATCH_SIZE}&offset=${offset}`;
+            const batchUrl = `${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=${offset}`;
             remainingBatches.push(
                 fetch(batchUrl, { headers })
                     .then(r => r.ok ? r.json() : [])
@@ -189,7 +194,7 @@ export async function GET(req: Request) {
         // Fetch exclusively from Supabase Archive
         const archivedCalls = await fetchArchivedCallLogs(fromDate, toDate);
 
-        // Filter and Sort
+        // Sort by date descending
         const final = archivedCalls
             .sort((a, b) => {
                 const timeA = a.startedAt ? new Date(a.startedAt).getTime() : 0;
@@ -210,3 +215,5 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: "Fetch failed" }, { status: 500 });
     }
 }
+
+

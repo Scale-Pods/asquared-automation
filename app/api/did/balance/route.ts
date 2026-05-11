@@ -8,34 +8,40 @@ export async function GET() {
       return NextResponse.json({ balance: 0, error: "DIDLOGIC_API_KEY not set" });
     }
 
-    const response = await fetch("https://api.didlogic.com/v1/account/balance", {
-      method: "GET",
-      headers: {
-        "Accept": "application/json",
-        "X-API-KEY": API_KEY
-      }
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
-    if (!response.ok) {
-      throw new Error(`DIDLogic API error: ${response.status}`);
+    try {
+      const response = await fetch("https://api.didlogic.com/v1/account/balance", {
+        method: "GET",
+        headers: {
+          "Accept": "application/json",
+          "X-API-KEY": API_KEY
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        return NextResponse.json({ balance: 0, error: `DIDLogic API error: ${response.status}` });
+      }
+
+      const data = await response.json();
+      const balanceValue = data.balance ?? data.amount ?? 0;
+
+      return NextResponse.json({
+        ...data,
+        balance: parseFloat(balanceValue)
+      });
+    } catch (fetchErr: any) {
+      clearTimeout(timeoutId);
+      console.error("DIDLogic Fetch Error:", fetchErr);
+      return NextResponse.json({ balance: 0, error: "DIDLogic Connection failed" });
     }
 
-    const data = await response.json();
-    
-    // DIDLogic response format usually has balance at root or in a specific field
-    // Adjust based on actual API response if known
-    const balanceValue = data.balance ?? data.amount ?? 0;
-
-    return NextResponse.json({
-      ...data,
-      balance: parseFloat(balanceValue)
-    });
-
   } catch (err: any) {
-    console.error("DIDLogic Balance Error:", err);
-    return NextResponse.json({
-      error: err.message,
-      balance: 0
-    }, { status: 500 });
+    console.error("Global DIDLogic API Error:", err);
+    return NextResponse.json({ balance: 0, error: err.message }, { status: 500 });
   }
 }

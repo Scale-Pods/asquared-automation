@@ -55,17 +55,18 @@ export async function GET() {
     };
 
     try {
-        const [nr_wf, followup, nurture] = await Promise.all([
-            fetchTable("nr_wf"),
-            fetchTable("followup"),
-            fetchTable("nurture")
+        const [leadsData, followup, nurture] = await Promise.all([
+            fetchTable("leads"),
+            fetchTable("owner_reachout"),
+            fetchTable("owner_outreach")
         ]);
 
         return NextResponse.json({
-            nr_wf,
+            nr_wf: leadsData,
             followup,
             nurture
         });
+
 
     } catch (error: any) {
         console.error('Raw fetch error:', error);

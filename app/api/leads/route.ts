@@ -87,32 +87,33 @@ export async function GET(req: Request) {
 
     try {
         // Parallel execution
-        const [nr_wf, followup, nurture, master_leads, v1_nw, v2_nw, v1_fu, v2_fu, v1_own, v2_own] = await Promise.all([
+        const [leadsData, followup, nurture, master_leads, v1_nw, v2_nw, v1_fu, v2_fu, v1_own, v2_own] = await Promise.all([
             // Workflows: No date limit, all columns, ensures WhatsApp works
-            fetchTableData("nr_wf", false),
-            fetchTableData("followup", false),
-            fetchTableData("nurture", false),
+            fetchTableData("leads", false),
+            fetchTableData("owner_reachout", false),
+            fetchTableData("owner_outreach", false),
             
             // Master Leads: Filtered by date for dashboard performance
             fetchTableData("master_leads", false, '*'),
             
             // Background counts for All-Time Voice metric
-            getTableCount("nr_wf", '"Voice 1"=not.is.null&"Voice 1"=not.eq.'),
-            getTableCount("nr_wf", '"Voice 2"=not.is.null&"Voice 2"=not.eq.'),
-            getTableCount("followup", '"Voice 1"=not.is.null&"Voice 1"=not.eq.'),
-            getTableCount("followup", '"Voice 2"=not.is.null&"Voice 2"=not.eq.'),
-            getTableCount("master_leads", '"Voice 1"=not.is.null&"Voice 1"=not.eq.'),
-            getTableCount("master_leads", '"Voice 2"=not.is.null&"Voice 2"=not.eq.')
+            getTableCount("leads", '"Voice 1"=not.is.null&"Voice 1"=not.eq.'),
+            getTableCount("leads", '"Voice 2"=not.is.null&"Voice 2"=not.eq.'),
+            getTableCount("owner_reachout", '"Voice 1"=not.is.null&"Voice 1"=not.eq.'),
+            getTableCount("owner_reachout", '"Voice 2"=not.is.null&"Voice 2"=not.eq.'),
+            getTableCount("owner_outreach", '"Voice 1"=not.is.null&"Voice 1"=not.eq.'),
+            getTableCount("owner_outreach", '"Voice 2"=not.is.null&"Voice 2"=not.eq.')
         ]);
 
         return new NextResponse(JSON.stringify({
-            nr_wf,
+            nr_wf: leadsData,
             followup,
             nurture,
             master_leads,
             allTimeVoiceCount: (v1_nw || 0) + (v2_nw || 0) + (v1_fu || 0) + (v2_fu || 0),
             allTimeOwnerVoiceCount: (v1_own || 0) + (v2_own || 0)
         }), {
+
             status: 200,
             headers: {
                 'Content-Type': 'application/json',

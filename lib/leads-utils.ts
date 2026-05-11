@@ -2,8 +2,13 @@ export interface RawLeadsResponse {
     nr_wf: any[];
     followup: any[];
     nurture: any[];
+    leads?: any[];
+    owner_reachout?: any[];
+    owner_outreach?: any[];
     master_leads?: any[];
 }
+
+
 
 export interface ConsolidatedLead {
     id: string;
@@ -57,9 +62,11 @@ function getWhatsAppHistory(l: any) {
 export function consolidateLeads(data: RawLeadsResponse): ConsolidatedLead[] {
     const consolidatedLeads: ConsolidatedLead[] = [];
 
-    // 1. Map nr_wf (Intro Loop)
-    if (Array.isArray(data.nr_wf)) {
-        data.nr_wf.forEach((l: any, idx: number) => {
+    // 1. Map leads (Intro Loop)
+    if (Array.isArray((data as any).nr_wf) || Array.isArray((data as any).leads)) {
+        const sourceData = (data as any).leads || (data as any).nr_wf;
+        sourceData.forEach((l: any, idx: number) => {
+
             const stages: string[] = [];
             const stage_data: Record<string, any> = {};
 
@@ -123,9 +130,11 @@ export function consolidateLeads(data: RawLeadsResponse): ConsolidatedLead[] {
         });
     }
 
-    // 2. Map followup (Follow Up Loop)
-    if (Array.isArray(data.followup)) {
-        data.followup.forEach((l: any, idx: number) => {
+    // 2. Map owner_reachout (Follow Up Loop)
+    if (Array.isArray((data as any).followup) || Array.isArray((data as any).owner_reachout)) {
+        const sourceData = (data as any).owner_reachout || (data as any).followup;
+        sourceData.forEach((l: any, idx: number) => {
+
             const stages: string[] = [];
             const stage_data: Record<string, any> = {};
 
@@ -189,9 +198,11 @@ export function consolidateLeads(data: RawLeadsResponse): ConsolidatedLead[] {
         });
     }
 
-    // 3. Map nurture (Nurture Loop)
-    if (Array.isArray(data.nurture)) {
-        data.nurture.forEach((l: any, idx: number) => {
+    // 3. Map owner_outreach (Nurture Loop)
+    if (Array.isArray((data as any).nurture) || Array.isArray((data as any).owner_outreach)) {
+        const sourceData = (data as any).owner_outreach || (data as any).nurture;
+        sourceData.forEach((l: any, idx: number) => {
+
             const stages: string[] = [];
             const stage_data: Record<string, any> = {};
 

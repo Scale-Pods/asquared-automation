@@ -11,7 +11,7 @@ import { ASLoader } from "@/components/as-loader";
 import { useData } from "@/context/DataContext";
 
 export default function WhatsappSentPage() {
-    const { leads: allLeads, loadingLeads } = useData();
+    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
     const [dateRange, setDateRange] = useState<any>(undefined);
     const [messages, setMessages] = useState<any[]>([]);
     const loading = loadingLeads;
@@ -106,7 +106,12 @@ export default function WhatsappSentPage() {
                     <h1 className="text-2xl font-bold">Total Sent Messages</h1>
                     <p className="text-slate-500">History of all outbound WhatsApp communications</p>
                 </div>
-                <DateRangePicker onUpdate={(val) => setDateRange(val.range)} />
+                <DateRangePicker onUpdate={(val) => {
+                    setDateRange(val.range);
+                    if (val.range?.from) {
+                        refreshLeads({ from: val.range.from, to: val.range.to, type: 'whatsapp' });
+                    }
+                }} />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

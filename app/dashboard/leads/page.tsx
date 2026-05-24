@@ -312,8 +312,12 @@ export default function LeadsPage() {
 
             // Loop Filter
             if (loopFilter !== "all") {
-                const source = (lead.source_loop === 'nr_wf' || lead.source_loop === 'Intro') ? 'intro' : lead.source_loop;
-                if (source !== loopFilter) return false;
+                const loop = (lead.source_loop || "").toLowerCase();
+                const matches = (loopFilter === "intro" && loop === "intro") ||
+                    (loopFilter === "followup" && (loop === "follow up" || loop.includes("follow"))) ||
+                    (loopFilter === "master" && loop === "master leads") ||
+                    (loopFilter === "nurture" && loop === "nurture");
+                if (!matches) return false;
             }
 
             // Status Filter
@@ -430,7 +434,7 @@ export default function LeadsPage() {
                                     <SelectItem value="all">All Loops</SelectItem>
                                     <SelectItem value="intro">Intro Loop</SelectItem>
                                     <SelectItem value="followup">Follow Up</SelectItem>
-                                    <SelectItem value="nurture">Nurture Loop</SelectItem>
+                                    <SelectItem value="master">Master Leads</SelectItem>
 
                                 </SelectContent>
                             </Select>
@@ -556,7 +560,7 @@ export default function LeadsPage() {
                                                         <>
                                                             <TableCell>
                                                                 <Badge variant="outline" className="bg-blue-50 text-blue-700 hover:bg-blue-50 border-blue-200 uppercase text-[10px] font-bold tracking-wider">
-                                                                    {lead.source_loop === 'followup' ? 'FOLLOW UP' : lead.source_loop === 'nr_wf' || lead.source_loop === 'Intro' ? 'INTRO' : (lead.display_loop || lead.current_loop || lead.source_loop || "").toUpperCase()}
+                                                                    {(lead.source_loop || "").toUpperCase()}
                                                                 </Badge>
                                                             </TableCell>
                                                             <TableCell>

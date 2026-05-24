@@ -18,7 +18,7 @@ export default function EmailDashboardPage() {
     const [selectedLoopMetric, setSelectedLoopMetric] = useState("intro");
     const [dateSubtitle, setDateSubtitle] = useState("all time");
 
-    const { leads: allLeads, loadingLeads } = useData();
+    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
     const [dateRange, setDateRange] = useState<any>({
         from: subDays(new Date(), 7),
         to: new Date(),
@@ -171,6 +171,9 @@ export default function EmailDashboardPage() {
 
     const handleDateUpdate = (range: any) => {
         setDateRange(range.range);
+        if (range.range?.from) {
+            refreshLeads({ from: range.range.from, to: range.range.to, type: 'email' });
+        }
         if (range.label) {
             setDateSubtitle(range.label.toLowerCase() === "today" ? "sent today" : `sent ${range.label.toLowerCase()}`);
         } else {

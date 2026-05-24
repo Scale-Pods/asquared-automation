@@ -4,7 +4,6 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { consolidateLeads, ConsolidatedLead } from "@/lib/leads-utils";
 import { subDays, startOfDay, endOfDay } from "date-fns";
 import { useRouter } from 'next/navigation';
-import { logout } from '@/app/actions/auth';
 
 interface DataContextType {
     leads: ConsolidatedLead[];
@@ -12,6 +11,7 @@ interface DataContextType {
     ownerLeads: any[];
     allTimeVoiceCount: number;
     allTimeOwnerVoiceCount: number;
+    waitingAvailabilityCount: number;
     loadingLeads: boolean;
     loadingCalls: boolean;
     loadingOwners: boolean;
@@ -19,7 +19,7 @@ interface DataContextType {
     voiceBalance: any;
     didBalance: any;
     error: string | null;
-    refreshLeads: (params?: { from?: Date; to?: Date; force?: boolean }) => Promise<void>;
+    refreshLeads: (params?: { from?: Date; to?: Date; force?: boolean; type?: string }) => Promise<void>;
     refreshCalls: (params?: { from?: Date; to?: Date; provider?: string; force?: boolean }) => Promise<void>;
     refreshOwners: (params?: { from?: Date; to?: Date; force?: boolean }) => Promise<void>;
     refreshBalances: () => Promise<void>;
@@ -35,6 +35,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const [allTimeVoiceCount, setAllTimeVoiceCount] = useState(0);
     const [allTimeOwnerVoiceCount, setAllTimeOwnerVoiceCount] = useState(0);
     const [ownerLeads, setOwnerLeads] = useState<any[]>([]);
+    const [waitingAvailabilityCount, setWaitingAvailabilityCount] = useState(0);
     const [loadingLeads, setLoadingLeads] = useState(true);
     const [loadingCalls, setLoadingCalls] = useState(true);
     const [loadingOwners, setLoadingOwners] = useState(true);
@@ -43,10 +44,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const [didBalance, setDidBalance] = useState<any>(null);
     const [error, setError] = useState<string | null>(null);
 
-    // Gatekeeper to prevent redundant identical calls
     const lastCallParams = useRef<string | null>(null);
 
-    const fetchLeads = useCallback(async (params?: { from?: Date; to?: Date; force?: boolean }) => {
+    const fetchLeads = useCallback(async (params?: { from?: Date; to?: Date; force?: boolean; type?: string }) => {
         setLoadingLeads(true);
         try {
             const now = new Date();
@@ -57,6 +57,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
                 from: fromDate.toISOString(),
                 to: toDate.toISOString()
             });
+
+            if (params?.type) {
+                query.set('type', params.type);
+            }
 
             const response = await fetch(`/api/leads?${query.toString()}`);
             if (!response.ok) throw new Error('Failed to fetch leads');
@@ -97,8 +101,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
             const currentQuery = query.toString();
 
-            // Skip if requested params are identical to the last SUCCESSFUL or ONGOING load
-            // But ALLOW if forced refresh or if calls array is currently empty
             if (!params?.force && lastCallParams.current === currentQuery && (calls.length > 0 || loadingCalls)) {
                 return;
             }
@@ -111,7 +113,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
                 const data = await response.json();
                 if (Array.isArray(data)) setCalls(data);
             } else {
-                // If failed, clear last params to allow retry
                 lastCallParams.current = null;
             }
         } catch (err: any) {
@@ -138,6 +139,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             if (response.ok) {
                 const data = await response.json();
                 setOwnerLeads(data.owner_data || []);
+                setWaitingAvailabilityCount(data.voiceCallStatusWaitingCount || 0);
             }
         } catch (err: any) {
             console.error('DataProvider owners fetch error:', err);
@@ -165,15 +167,13 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
 
     useEffect(() => {
-        // Master Dashboard strategy: Fetch everything on mount
         refreshAll();
 
-        // Session Monitor: Checks every 1 minute if the session is still valid
         const checkSession = async () => {
             try {
                 const res = await fetch('/api/auth/session');
                 if (!res.ok) {
-                    // Session expired or invalid
+                    const { logout } = await import('@/app/actions/auth');
                     await logout();
                     router.push('/');
                     router.refresh();
@@ -183,7 +183,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             }
         };
 
-        const interval = setInterval(checkSession, 60000); // Check every 60 seconds
+        const interval = setInterval(checkSession, 60000);
         return () => clearInterval(interval);
     }, [refreshAll, router]);
 
@@ -211,7 +211,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         let count = 0;
 
         leads.forEach((lead: any) => {
-            // Deduplicate
             const uid = lead["Lead ID"] || lead.id || lead.phone;
             if (!uid || seen.has(uid)) return;
             seen.add(uid);
@@ -222,14 +221,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             const content = String(track).trim();
             let replyDate: Date | null = null;
 
-            // ISO regex extraction
             const isoMatch = content.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^ \n]*)/);
             if (isoMatch) {
                 const d = new Date(isoMatch[1]);
                 if (!isNaN(d.getTime())) replyDate = d;
             }
 
-            // Fallback: try direct parse
             if (!replyDate) {
                 const d = new Date(content);
                 if (!isNaN(d.getTime()) && (content.includes('T') || (content.includes('-') && content.includes(':')))) {
@@ -250,6 +247,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             leads,
             calls,
             ownerLeads,
+            waitingAvailabilityCount,
             allTimeVoiceCount,
             allTimeOwnerVoiceCount,
             loadingLeads,

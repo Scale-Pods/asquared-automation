@@ -24,7 +24,7 @@ import { format, subDays } from "date-fns";
 import { useData } from "@/context/DataContext";
 
 export default function VoiceAnalyticsPage() {
-    const { calls: globalCalls, loadingCalls, voiceBalance, leads: globalLeads, loadingLeads, refreshCalls, ownerLeads, allTimeVoiceCount, allTimeOwnerVoiceCount } = useData();
+    const { calls: globalCalls, loadingCalls, voiceBalance, leads: globalLeads, loadingLeads, refreshCalls, ownerLeads, allTimeVoiceCount, allTimeOwnerVoiceCount, waitingAvailabilityCount } = useData();
     const [statusFilter, setStatusFilter] = useState("all");
     // accountFilter: 'vapi' | 'vapi-owners' | 'vapi-normal' | 'elevenlabs'
     const [accountFilter, setAccountFilter] = useState("vapi");
@@ -349,9 +349,9 @@ export default function VoiceAnalyticsPage() {
                         bg="bg-emerald-50"
                     />
                     <StatCard
-                        title="Positive Response Rate"
-                        value={`${stats.ownerPositiveRate.toFixed(1)}%`}
-                        change="EOI & Callback"
+                        title="Awaiting Availability"
+                        value={`${stats.ownersCalls > 0 ? ((waitingAvailabilityCount / stats.ownersCalls) * 100).toFixed(1) : 0}%`}
+                        change={`${waitingAvailabilityCount.toLocaleString()} / ${stats.ownersCalls.toLocaleString()} calls`}
                         icon={<CheckCircle className="h-5 w-5" />}
                         color="text-blue-600"
                         bg="bg-blue-50"

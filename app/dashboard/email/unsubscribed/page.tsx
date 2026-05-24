@@ -11,7 +11,7 @@ import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function UnsubscribedPage() {
-    const { leads: allLeads, loadingLeads } = useData();
+    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
     const [leads, setLeads] = useState<any[]>([]);
     const loading = loadingLeads;
 
@@ -85,7 +85,12 @@ export default function UnsubscribedPage() {
                     </h1>
                     <p className="text-slate-500">View detailed list of users who opted out of email marketing</p>
                 </div>
-                <DateRangePicker onUpdate={(range: any) => setDateRange(range.range)} />
+                <DateRangePicker onUpdate={(range: any) => {
+                    setDateRange(range.range);
+                    if (range.range?.from) {
+                        refreshLeads({ from: range.range.from, to: range.range.to, type: 'email' });
+                    }
+                }} />
             </div>
 
             <Card className="border-slate-200 shadow-sm bg-white">

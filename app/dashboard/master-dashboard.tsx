@@ -109,7 +109,8 @@ export default function MasterDashboard() {
         leads: allLeads, 
         calls: allCalls, 
         ownerLeads,
-        allTimeVoiceCount, 
+        allTimeVoiceCount,
+        allTimeOwnerVoiceCount,
         loadingLeads, 
         loadingCalls, 
         loadingOwners,
@@ -123,6 +124,11 @@ export default function MasterDashboard() {
     const [acquisitionChartData, setAcquisitionChartData] = useState<any[]>([]);
     const [stats, setStats] = useState({
         totalLeads: 0,
+        introCount: 0,
+        introUkCount: 0,
+        followUpCount: 0,
+        followUpUkCount: 0,
+        leadsTableCount: 0,
         totalEmails: 0,
         totalWhatsApp: 0,
         totalVoice: 0,
@@ -247,6 +253,13 @@ export default function MasterDashboard() {
                 });
 
                 setLeads(filteredLeads);
+
+                // Per-source-table counts (from source_table field)
+                const srcIntro = allLeads.filter(l => l.source_table === "intro").length;
+                const srcIntroUk = allLeads.filter(l => l.source_table === "intro_uk").length;
+                const srcFollowUp = allLeads.filter(l => l.source_table === "follow_up").length;
+                const srcFollowUpUk = allLeads.filter(l => l.source_table === "follow_up_uk").length;
+                const srcLeads = allLeads.filter(l => String(l.source_table || "").startsWith("leads")).length;
 
                 // Acquisition Chart
                 const acquisitionMap: { [key: string]: number } = {};
@@ -405,6 +418,11 @@ export default function MasterDashboard() {
                 setStats(prev => ({
                     ...prev,
                     totalLeads: normalLeads.length,
+                    introCount: srcIntro,
+                    introUkCount: srcIntroUk,
+                    followUpCount: srcFollowUp,
+                    followUpUkCount: srcFollowUpUk,
+                    leadsTableCount: srcLeads,
                     totalEmails: emailCount,
                     totalWhatsApp: whatsappChatsCount,
                     whatsappUniqueSent: whatsappChatsCount,
@@ -494,9 +512,63 @@ export default function MasterDashboard() {
                 <DateRangePicker onUpdate={handleDateUpdate} />
             </div>
 
-            {/* Top Metric Cards */}
+            {/* Source Table Breakdown */}
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                <MetricCard
+                    title="Intro (US)"
+                    value={loading ? "..." : stats.introCount.toLocaleString()}
+                    change="source: intro"
+                    isUp={true}
+                    icon={<Users className="h-6 w-6" />}
+                    color="text-blue-600"
+                    bg="bg-blue-50"
+                    border="border-blue-100"
+                />
+                <MetricCard
+                    title="Intro (UK)"
+                    value={loading ? "..." : stats.introUkCount.toLocaleString()}
+                    change="source: intro_uk"
+                    isUp={true}
+                    icon={<Users className="h-6 w-6" />}
+                    color="text-sky-600"
+                    bg="bg-sky-50"
+                    border="border-sky-100"
+                />
+                <MetricCard
+                    title="Follow Up (US)"
+                    value={loading ? "..." : stats.followUpCount.toLocaleString()}
+                    change="source: follow_up"
+                    isUp={true}
+                    icon={<MessageCircle className="h-6 w-6" />}
+                    color="text-purple-600"
+                    bg="bg-purple-50"
+                    border="border-purple-100"
+                />
+                <MetricCard
+                    title="Follow Up (UK)"
+                    value={loading ? "..." : stats.followUpUkCount.toLocaleString()}
+                    change="source: follow_up_uk"
+                    isUp={true}
+                    icon={<MessageCircle className="h-6 w-6" />}
+                    color="text-violet-600"
+                    bg="bg-violet-50"
+                    border="border-violet-100"
+                />
+                <MetricCard
+                    title="Leads Table"
+                    value={loading ? "..." : stats.leadsTableCount.toLocaleString()}
+                    change="source: leads"
+                    isUp={true}
+                    icon={<BarChart3 className="h-6 w-6" />}
+                    color="text-emerald-600"
+                    bg="bg-emerald-50"
+                    border="border-emerald-100"
+                    onClick={() => router.push('/dashboard/leads')}
+                />
+            </div>
 
+            {/* Channel Metric Cards */}
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 <MetricCard
                     title="Total Leads"
                     value={loading ? "..." : stats.totalLeads.toLocaleString()}

@@ -136,7 +136,7 @@ const getMsgDateWithFallback = (lead: any, msgKey: string, tsKey?: string) => {
 
 export default function WhatsappDashboardPage() {
     const router = useRouter();
-    const { leads: allLeads, loadingLeads, ownerLeads, loadingOwners, computeWPReplies } = useData();
+    const { leads: allLeads, loadingLeads, ownerLeads, loadingOwners, computeWPReplies, refreshLeads } = useData();
     const [leads, setLeads] = useState<any[]>([]);
     const [isRepliesOpen, setIsRepliesOpen] = useState(false);
     const [stats, setStats] = useState({
@@ -155,6 +155,12 @@ export default function WhatsappDashboardPage() {
         from: subDays(new Date(), 7),
         to: new Date()
     });
+
+    useEffect(() => {
+        if (dateRange?.from) {
+            refreshLeads({ from: dateRange.from, to: dateRange.to, type: 'whatsapp' });
+        }
+    }, [dateRange?.from, dateRange?.to]);
 
 
     const ownerStats = useMemo(() => {

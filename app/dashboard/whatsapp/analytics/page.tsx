@@ -69,7 +69,7 @@ const parseMsg = (raw: any): { date: Date | null, content: string } => {
 };
 
 export default function WhatsappAnalyticsPage() {
-    const { leads: allLeads, loadingLeads, computeWPReplies } = useData();
+    const { leads: allLeads, loadingLeads, computeWPReplies, refreshLeads } = useData();
     const [leads, setLeads] = useState<ConsolidatedLead[]>([]);
     const loading = loadingLeads;
     const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
@@ -77,43 +77,38 @@ export default function WhatsappAnalyticsPage() {
         to: new Date()
     });
 
-    // Owner data (separate API)
+    useEffect(() => {
+        if (dateRange?.from) {
+            refreshLeads({ from: dateRange.from, to: dateRange.to, type: 'whatsapp' });
+        }
+    }, [dateRange?.from, dateRange?.to]);
+
+    // Owner data from master_leads table with server-side date filtering
     const [ownerLeads, setOwnerLeads] = useState<any[]>([]);
     const [loadingOwners, setLoadingOwners] = useState(true);
     useEffect(() => {
-        fetch("/api/owner-leads")
+        if (!dateRange?.from || !dateRange?.to) return;
+        const q = new URLSearchParams({
+            from: startOfDay(dateRange.from).toISOString(),
+            to: endOfDay(dateRange.to).toISOString()
+        });
+        setLoadingOwners(true);
+        fetch(`/api/owner-leads?${q}`)
             .then(res => res.json())
             .then(data => setOwnerLeads(data.owner_data || []))
             .catch(err => console.error("Owner fetch error:", err))
             .finally(() => setLoadingOwners(false));
-    }, []);
+    }, [dateRange?.from, dateRange?.to]);
 
     const ownerStats = useMemo(() => {
-        const fromDate = dateRange?.from ? startOfDay(new Date(dateRange.from)) : null;
-        const toDate = dateRange?.to ? endOfDay(new Date(dateRange.to)) : (fromDate ? endOfDay(new Date(fromDate)) : null);
-        const isInRange = (d: Date | null) => {
-            if (!fromDate || !toDate) return true;
-            if (!d) return false;
-            return d >= fromDate && d <= toDate;
-        };
-
         let reachouts = 0, replies = 0, msgsSent = 0;
         ownerLeads.forEach((o: any) => {
             const wp1 = o["Whatsapp_1"];
             if (!wp1 || wp1 === "" || String(wp1).toLowerCase() === "no") return;
 
-            // Robust date parsing for complete data
-            let wpDate = o["Whatsapp_1_Date"] ? new Date(o["Whatsapp_1_Date"]) : null;
-            if (!wpDate || isNaN(wpDate.getTime())) {
-                wpDate = parseMsg(wp1).date;
-            }
-            
-            if (!isInRange(wpDate)) return;
-
             reachouts++;
             if (wp1) msgsSent++;
             if (o["retry_1"]) msgsSent++;
-            // Check all bot replies
             for (let i = 1; i <= 10; i++) {
                 if (o[`Bot_Replied_${i}`]) msgsSent++;
             }
@@ -124,7 +119,7 @@ export default function WhatsappAnalyticsPage() {
             }
         });
         return { reachouts, replies, msgsSent };
-    }, [ownerLeads, dateRange]);
+    }, [ownerLeads]);
 
     const getLeadLatestActivity = (lead: any) => {
         // PRIORITY: Use the specific reachout timestamp for Analytics

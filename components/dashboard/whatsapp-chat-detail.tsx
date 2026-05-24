@@ -300,7 +300,7 @@ export function WhatsAppChatDetail({ customerId, onClose }: WhatsAppChatDetailPr
                                 <div>
                                     <span className="text-[10px] font-bold text-slate-400 uppercase">Source Table</span>
                                     <p className="font-bold text-blue-600 mt-1 text-xs">
-                                        {lead.id.startsWith('intro-') ? 'nr_wf' : (lead.id.startsWith('followup-') ? 'followup' : 'nurture')}
+                                        {lead.source_table || 'unknown'}
                                     </p>
                                 </div>
                             </div>

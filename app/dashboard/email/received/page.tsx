@@ -24,7 +24,7 @@ import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { useData } from "@/context/DataContext";
 
 export default function ReceivedEmailsPage() {
-    const { leads: allLeads, loadingLeads } = useData();
+    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
     const [replies, setReplies] = useState<any[]>([]);
     const loading = loadingLeads;
     const [loopFilter, setLoopFilter] = useState("all");
@@ -189,7 +189,12 @@ export default function ReceivedEmailsPage() {
                     </div>
                     <DateRangePicker
                         className="w-full md:w-[260px]"
-                        onUpdate={(values) => setDateRange(values.range)}
+                        onUpdate={(values) => {
+                            setDateRange(values.range);
+                            if (values.range?.from) {
+                                refreshLeads({ from: values.range.from, to: values.range.to, type: 'email' });
+                            }
+                        }}
                     />
                 </div>
 

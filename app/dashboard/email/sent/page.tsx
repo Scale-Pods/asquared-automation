@@ -35,7 +35,7 @@ import { ASLoader } from "@/components/as-loader";
 const ITEMS_PER_PAGE = 7;
 
 export default function SentEmailsPage() {
-    const { leads: allLeads, loadingLeads } = useData();
+    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
     const [page, setPage] = useState(1);
     const [dateRange, setDateRange] = useState<any>({
         from: subDays(new Date(), 7),
@@ -251,7 +251,12 @@ export default function SentEmailsPage() {
                     </div>
                     <DateRangePicker
                         className="w-full md:w-[260px]"
-                        onUpdate={(values) => setDateRange(values.range)}
+                        onUpdate={(values) => {
+                            setDateRange(values.range);
+                            if (values.range?.from) {
+                                refreshLeads({ from: values.range.from, to: values.range.to, type: 'email' });
+                            }
+                        }}
                     />
                 </div>
 

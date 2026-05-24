@@ -56,7 +56,7 @@ interface WarmupData {
 }
 
 export default function EmailAnalyticsPage() {
-    const { leads: allLeads, loadingLeads } = useData();
+    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
     const [warmupData, setWarmupData] = useState<WarmupData[]>([]);
     const [generalData, setGeneralData] = useState<any>(null);
     const [loadingLocal, setLoadingLocal] = useState(true);
@@ -135,6 +135,7 @@ export default function EmailAnalyticsPage() {
         setDateRange(range);
         if (range?.from && range?.to) {
             fetchData(range.from, range.to);
+            refreshLeads({ from: range.from, to: range.to, type: 'email' });
         }
     };
 

@@ -83,7 +83,7 @@ const parseMsg = (raw: any): { date: Date | null, content: string } => {
 };
 
 export default function WhatsappLeadsPage() {
-    const { leads: allLeads, loadingLeads } = useData();
+    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
     const [leads, setLeads] = useState<ConsolidatedLead[]>([]);
     const loading = loadingLeads;
     const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
@@ -121,15 +121,19 @@ export default function WhatsappLeadsPage() {
     }, [allLeads, loadingLeads]);
 
     useEffect(() => {
-        if (activeTab === "owners" && ownerLeads.length === 0) {
+        if (activeTab === "owners") {
             setLoadingOwners(true);
-            fetch("/api/owner-leads")
+            const q = new URLSearchParams({
+                from: startOfDay(dateRange.from).toISOString(),
+                to: endOfDay(dateRange.to).toISOString()
+            });
+            fetch(`/api/owner-leads?${q}`)
                 .then(res => res.json())
                 .then(data => setOwnerLeads(data.owner_data || []))
                 .catch(err => console.error("Owner fetch error:", err))
                 .finally(() => setLoadingOwners(false));
         }
-    }, [activeTab, ownerLeads.length]);
+    }, [activeTab, dateRange?.from, dateRange?.to]);
 
     const filteredLeads = useMemo(() => {
         setCurrentPage(1); // Reset to first page on filter change
@@ -244,18 +248,6 @@ export default function WhatsappLeadsPage() {
                                 phone.includes(searchQuery);
             if (!matchesSearch) return false;
 
-            if (dateRange.from) {
-                const wpDateStr = o["Whatsapp_1_Date"];
-                if (wpDateStr) {
-                    const wpDate = new Date(wpDateStr);
-                    const fromDate = startOfDay(new Date(dateRange.from));
-                    const toDate = dateRange.to ? endOfDay(new Date(dateRange.to)) : endOfDay(new Date(fromDate));
-                    if (wpDate < fromDate || wpDate > toDate) return false;
-                } else {
-                    return false;
-                }
-            }
-
             const wtR = o["WTS_Reply_Track"];
             let hasReplied = false;
             if (wtR && wtR !== "" && String(wtR).toLowerCase() !== "no") {
@@ -269,7 +261,7 @@ export default function WhatsappLeadsPage() {
 
             return true;
         });
-    }, [ownerLeads, searchQuery, dateRange, activeFilters]);
+    }, [ownerLeads, searchQuery, activeFilters]);
 
     // Pagination Logic
     const totalPages = activeTab === "leads" 
@@ -325,7 +317,12 @@ export default function WhatsappLeadsPage() {
                             RESET FILTERS
                         </Button>
                     )}
-                    <DateRangePicker onUpdate={({ range }) => setDateRange({ from: range?.from, to: range?.to })} />
+                    <DateRangePicker onUpdate={({ range }) => {
+                        setDateRange({ from: range?.from, to: range?.to });
+                        if (range?.from) {
+                            refreshLeads({ from: range.from, to: range.to, type: 'whatsapp' });
+                        }
+                    }} />
                 </div>
             </div>
 

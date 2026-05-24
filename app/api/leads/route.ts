@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { consolidateLeads } from '@/lib/leads-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,8 +8,10 @@ export async function GET(req: Request) {
     const from = searchParams.get('from');
     const to = searchParams.get('to');
     const type = searchParams.get('type');
+    const sourceTable = searchParams.get('sourceTable');
     const pageParam = searchParams.get('page');
     const pageSizeParam = searchParams.get('pageSize');
+    const whatsappOnly = searchParams.get('whatsappOnly') === 'true';
 
     const page = pageParam ? Math.max(1, parseInt(pageParam, 10) || 1) : undefined;
     const pageSize = Math.min(10000, Math.max(1, parseInt(pageSizeParam ?? "1000", 10) || 1000));
@@ -114,26 +117,63 @@ export async function GET(req: Request) {
         }
     };
 
+    function isWhatsAppEligible(lead: any): boolean {
+        if (lead.stages_passed?.some((s: string) => s.toLowerCase().includes("whatsapp"))) return true;
+        if (lead.whatsapp_replied && lead.whatsapp_replied !== "No" && lead.whatsapp_replied !== "none") return true;
+        for (let i = 1; i <= 10; i++) {
+            const r = lead[`W.P_Replied_${i}`];
+            if (r && String(r).toLowerCase() !== "no" && String(r).toLowerCase() !== "none") return true;
+            if (lead[`W.P_FollowUp_${i}`]) return true;
+        }
+        for (let i = 1; i <= 12; i++) {
+            if (lead[`W.P_${i}`] || lead.stage_data?.[`WhatsApp ${i}`]) return true;
+        }
+        return false;
+    }
+
     try {
         if (type === 'whatsapp') {
-            const [intro, intro_uk, follow_up, follow_up_uk] = await Promise.all([
-                fetchTableData("intro", "WP_last_contacted"),
-                fetchTableData("intro_uk", "WP_last_contacted"),
-                fetchTableData("follow_up", "WP_last_contacted"),
-                fetchTableData("follow_up_uk", "WP_last_contacted")
-            ]);
+            const tables = sourceTable ? [sourceTable] : ["intro", "intro_uk", "follow_up", "follow_up_uk"];
+            const validTables = ["intro", "intro_uk", "follow_up", "follow_up_uk"];
+            const selected = tables.filter(t => validTables.includes(t));
 
-            return new NextResponse(JSON.stringify({
-                intro: intro.data,
-                intro_uk: intro_uk.data,
-                follow_up: follow_up.data,
-                follow_up_uk: follow_up_uk.data,
-                master_leads: [],
-                total_intro: intro.total,
-                total_intro_uk: intro_uk.total,
-                total_follow_up: follow_up.total,
-                total_follow_up_uk: follow_up_uk.total
-            }), {
+            const results = await Promise.all(
+                selected.map(t => fetchTableData(t, "WP_last_contacted"))
+            );
+
+            if (whatsappOnly) {
+                const rawResponse: Record<string, any> = { master_leads: [] };
+                selected.forEach((t, i) => { rawResponse[t] = results[i].data; });
+                validTables.forEach(t => {
+                    if (!selected.includes(t)) rawResponse[t] = [];
+                });
+                const consolidated = consolidateLeads(rawResponse);
+                const filtered = consolidated.filter(isWhatsAppEligible);
+                return new NextResponse(JSON.stringify({ whatsappLeads: filtered, totalWhatsappLeads: filtered.length }), {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0',
+                    }
+                });
+            }
+
+            const response: Record<string, any> = { master_leads: [] };
+            selected.forEach((t, i) => {
+                response[t] = results[i].data;
+                response[`total_${t}`] = results[i].total;
+            });
+            // Ensure missing tables return empty arrays
+            validTables.forEach(t => {
+                if (!selected.includes(t)) {
+                    response[t] = [];
+                    response[`total_${t}`] = 0;
+                }
+            });
+
+            return new NextResponse(JSON.stringify(response), {
                 status: 200,
                 headers: {
                     'Content-Type': 'application/json',
@@ -145,24 +185,27 @@ export async function GET(req: Request) {
         }
 
         if (type === 'email') {
-            const [intro, intro_uk, follow_up, follow_up_uk] = await Promise.all([
-                fetchTableData("intro", "Email_last_contacted"),
-                fetchTableData("intro_uk", "Email_last_contacted"),
-                fetchTableData("follow_up", "Email_last_contacted"),
-                fetchTableData("follow_up_uk", "Email_last_contacted")
-            ]);
+            const tables = sourceTable ? [sourceTable] : ["intro", "intro_uk", "follow_up", "follow_up_uk"];
+            const validTables = ["intro", "intro_uk", "follow_up", "follow_up_uk"];
+            const selected = tables.filter(t => validTables.includes(t));
 
-            return new NextResponse(JSON.stringify({
-                intro: intro.data,
-                intro_uk: intro_uk.data,
-                follow_up: follow_up.data,
-                follow_up_uk: follow_up_uk.data,
-                master_leads: [],
-                total_intro: intro.total,
-                total_intro_uk: intro_uk.total,
-                total_follow_up: follow_up.total,
-                total_follow_up_uk: follow_up_uk.total
-            }), {
+            const results = await Promise.all(
+                selected.map(t => fetchTableData(t, "Email_last_contacted"))
+            );
+
+            const response: Record<string, any> = { master_leads: [] };
+            selected.forEach((t, i) => {
+                response[t] = results[i].data;
+                response[`total_${t}`] = results[i].total;
+            });
+            validTables.forEach(t => {
+                if (!selected.includes(t)) {
+                    response[t] = [];
+                    response[`total_${t}`] = 0;
+                }
+            });
+
+            return new NextResponse(JSON.stringify(response), {
                 status: 200,
                 headers: {
                     'Content-Type': 'application/json',

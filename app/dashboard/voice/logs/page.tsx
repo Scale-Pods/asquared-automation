@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { RefreshCw, ChevronLeft, ChevronRight, User, Download, Search, Info, Activity, Crown, Phone, FileSpreadsheet } from "lucide-react";
+import { RefreshCw, ChevronLeft, ChevronRight, User, Download, Search, Info, Activity, Crown, FileSpreadsheet } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ASLoader } from "@/components/as-loader";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,9 +13,9 @@ import React, { useState, useEffect } from "react";
 import { CallDetailsModal } from "@/components/voice/call-details-modal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { fetchCached } from "@/lib/use-cached-fetch";
 import { format, subDays } from "date-fns";
 import { formatDuration } from "@/lib/utils";
-import { useData } from "@/context/DataContext";
 import {
     Tooltip,
     TooltipContent,
@@ -23,21 +23,13 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-const DynamicRowCells = ({ call, leads, telephonyCost }: { call: any, leads: any[], telephonyCost?: number }) => {
-    let guestName = call.name || "Guest";
+const DynamicRowCells = ({ call, telephonyCost }: { call: any, telephonyCost?: number }) => {
+    const guestName = call.name || "Guest";
     const guestNum = call.phone || "Unknown";
     const realType = call.type || (call.isInbound ? "Inbound" : "Outbound");
     const isInboundState = call.isInbound;
     const voiceCallStatus = call.voiceCallStatus;
     const note = call.note;
-
-    if ((!guestName || guestName === "Guest" || guestName === "Unknown") && call.phone && leads) {
-        const targetPhone = call.phone.replace(/\D/g, '');
-        if (targetPhone && targetPhone.length > 5) {
-            const foundLead = leads.find((l: any) => l.phone && l.phone.replace(/\D/g, '') === targetPhone);
-            if (foundLead && foundLead.name) guestName = foundLead.name;
-        }
-    }
 
     return (
         <>
@@ -145,10 +137,9 @@ const DynamicRowCells = ({ call, leads, telephonyCost }: { call: any, leads: any
 };
 
 export default function VoiceLogsPage() {
-    const { calls: globalCalls, loadingCalls, refreshCalls, leads, loadingLeads } = useData();
-    const [allCallsMapped, setAllCallsMapped] = useState<any[]>([]);
     const [calls, setCalls] = useState<any[]>([]);
-    const loading = loadingCalls;
+    const [totalCalls, setTotalCalls] = useState(0);
+    const [loading, setLoading] = useState(false);
     const [selectedCall, setSelectedCall] = useState<any>(null);
     const [modalOpen, setModalOpen] = useState(false);
     const [dateRange, setDateRange] = useState<any>(undefined);
@@ -161,6 +152,8 @@ export default function VoiceLogsPage() {
 
     const [accountFilter, setAccountFilter] = useState("vapi");
     const [phoneFilter, setPhoneFilter] = useState("");
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 10;
     
     useEffect(() => {
         setDateRange({
@@ -169,146 +162,74 @@ export default function VoiceLogsPage() {
         });
     }, []);
 
-    // Server-side refresh when filters change
-    useEffect(() => {
-        if (!refreshCalls) return;
-        const isDefaultRange = !dateRange;
-        refreshCalls({
-            from: isDefaultRange ? undefined : dateRange?.from,
-            to: isDefaultRange ? undefined : (dateRange?.to || dateRange?.from),
-            provider: 'vapi'
-        });
-    }, [dateRange, accountFilter, refreshCalls]);
-
-    const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 10;
-
-    useEffect(() => {
-        if (loadingLeads || !globalCalls) return;
-
-        const mappedCalls = globalCalls.map((c: any) => {
-            let resolvedName = c.name;
-            let voiceCallStatus = "";
-            let note = "";
-
-            if (c.phone && leads) {
-                const targetPhone = c.phone.replace(/\D/g, '');
-                if (targetPhone && targetPhone.length > 5) {
-                    const foundLead = leads.find((l: any) => l.phone && l.phone.replace(/\D/g, '') === targetPhone);
-                    if (foundLead) {
-                        if (!resolvedName || resolvedName === "Guest" || resolvedName === "Unknown") {
-                            resolvedName = foundLead.name;
-                        }
-                        voiceCallStatus = foundLead.voice_call_status;
-                        note = foundLead.note;
-                    }
-                }
+    const fetchLogs = async () => {
+        setLoading(true);
+        try {
+            const params = new URLSearchParams();
+            if (dateRange?.from) params.set('from', dateRange.from.toISOString());
+            if (dateRange?.to) params.set('to', dateRange.to.toISOString());
+            if (accountFilter !== 'vapi') params.set('account', accountFilter);
+            if (statusFilter !== 'all') params.set('status', statusFilter);
+            if (voiceStatusFilter !== 'all') params.set('voiceStatus', voiceStatusFilter);
+            if (typeFilter !== 'all') params.set('type', typeFilter);
+            if (phoneFilter) params.set('search', phoneFilter);
+            if (sortBy !== 'newest') {
+                params.set('sort', sortBy);
+                params.set('order', sortBy === 'oldest' ? 'asc' : 'desc');
             }
-            const UAE_BOT_ID = '70f05e16-18f3-4f6e-964a-f47b299c6c1d';
-            const UAE_BUSINESS_NUMBER = '+97148714150';
-            let resolvedType = c.type || (c.isInbound ? "Inbound" : "Outbound");
-            
-            // If the call is from the UAE bot or the UAE business number to a customer, it's Outbound.
-            if (resolvedType === "Inbound") {
-                const isFromUAEBot = c.assistantId === UAE_BOT_ID;
-                const isFromUAENumber = c.fromNumber === UAE_BUSINESS_NUMBER || c.phoneNumber === UAE_BUSINESS_NUMBER;
-                
-                if ((isFromUAEBot || isFromUAENumber) && c.phone) {
-                    resolvedType = "Outbound";
-                }
-            }
+            params.set('page', String(currentPage));
+            params.set('pageSize', String(itemsPerPage));
 
-            return {
-                ...c,
-                name: resolvedName,
-                type: resolvedType,
+            const data = await fetchCached(`/api/calls/logs?${params.toString()}`);
+            const mappedCalls = (data.calls || []).map((c: any) => ({
+                id: c.id,
+                startedAt: c.startedAt,
+                durationSeconds: c.durationSeconds || 0,
+                costValue: c.costUsd || 0,
+                cost: `$${Number(c.costUsd || 0).toFixed(3)}`,
+                phone: c.customerPhone || 'Unknown',
+                name: c.customerName || 'Guest',
+                phoneNumber: '',
+                status: c.status || 'answered',
+                type: c.isInbound ? "Inbound" : "Outbound",
+                isInbound: c.isInbound,
+                country: c.country || 'Unknown',
+                source: 'vapi',
+                vapiAccount: c.vapiAccount || 'normal',
+                vapiStatus: c.vapiStatus || '',
+                assistantId: c.assistantId || null,
+                breakdown: { agent: c.costUsd || 0, telephony: 0, total: c.costUsd || 0 },
                 displayDate: c.startedAt ? format(new Date(c.startedAt), 'PPp') : 'N/A',
                 displayDuration: formatDuration(c.durationSeconds || 0),
-                voiceCallStatus,
-                note
-            };
-        });
-
-        setAllCallsMapped(mappedCalls);
-    }, [globalCalls, leads, loadingLeads]);
-
-
+                voiceCallStatus: c.voiceCallStatus || '',
+                note: c.note || '',
+                transcript: c.transcript || '',
+                summary: c.summary || '',
+                recordingUrl: c.recordingUrl || '',
+            }));
+            setCalls(mappedCalls);
+            setTotalCalls(data.total || 0);
+        } catch (err) {
+            console.error("Failed to fetch call logs", err);
+            setCalls([]);
+            setTotalCalls(0);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
+        if (!dateRange) return;
         setCurrentPage(1);
-    }, [dateRange, statusFilter, voiceStatusFilter, typeFilter, accountFilter, phoneFilter, sortBy]);
+        fetchLogs();
+    }, [dateRange, accountFilter, statusFilter, voiceStatusFilter, typeFilter, phoneFilter, sortBy]);
 
     useEffect(() => {
-        const filteredCalls = allCallsMapped.filter((call: any) => {
-            // 1. Account / provider filter (must pass first)
-            if (accountFilter === 'vapi' && call.source !== 'vapi') return false;
-            if (accountFilter === 'vapi-normal' && (call.source !== 'vapi' || call.vapiAccount !== 'normal')) return false;
-            if (accountFilter === 'vapi-owners' && (call.source !== 'vapi' || call.vapiAccount !== 'owners')) return false;
-
-            // 2. Status filter (Vapi) - Removed UI dropdown, but keeping logic for safety
-            if (statusFilter !== "all" && call.status !== statusFilter) return false;
-
-            // 2b. Voice Status filter (Lead)
-            if (voiceStatusFilter !== "all") {
-                const target = String(call.voiceCallStatus || "").toLowerCase();
-                const filter = voiceStatusFilter.toLowerCase();
-                
-                if (filter === "did not answer") {
-                    // Match all variations of no answer
-                    if (target !== "no answer" && target !== "did_not_answer" && target !== "no_answer") return false;
-                } else if (target !== filter) {
-
-                    return false;
-                }
-            }
-
-
-            // 3. Type filter
-            if (typeFilter !== "all") {
-                const normalizedCallType = (call.type || (call.isInbound ? "Inbound" : "Outbound")).toLowerCase();
-                const isSecondaryLeads = call.assistantId === '560ca61b-8cd3-4b5f-996b-2966abfa37fd';
-
-                if (typeFilter === "secondary-leads") {
-                    if (!isSecondaryLeads) return false;
-                } else if (typeFilter === "normal") {
-                    if (isSecondaryLeads) return false;
-                } else if (normalizedCallType !== typeFilter.toLowerCase()) {
-                    return false;
-                }
-            }
-
-            // 4. Phone / name search
-            if (phoneFilter) {
-                const searchStr = phoneFilter.toLowerCase().trim();
-                const phoneSearch = searchStr.replace(/\D/g, '');
-                const phoneTarget = (call.phone || "").replace(/\D/g, '');
-                const matchesPhone = phoneSearch && phoneTarget.includes(phoneSearch);
-                const matchesName = (call.name || "Guest").toLowerCase().includes(searchStr);
-                if (!matchesPhone && !matchesName) return false;
-            }
-
-            return true;
-        });
-
-        const sortedCalls = [...filteredCalls].sort((a, b) => {
-            if (sortBy === "longest") return (b.durationSeconds || 0) - (a.durationSeconds || 0);
-            if (sortBy === "shortest") return (a.durationSeconds || 0) - (b.durationSeconds || 0);
-            if (sortBy === "oldest") {
-                return (a.startedAt ? new Date(a.startedAt).getTime() : 0) - (b.startedAt ? new Date(b.startedAt).getTime() : 0);
-            }
-            return (b.startedAt ? new Date(b.startedAt).getTime() : 0) - (a.startedAt ? new Date(a.startedAt).getTime() : 0);
-        });
-
-        setCalls(sortedCalls);
-    }, [allCallsMapped, dateRange, statusFilter, voiceStatusFilter, typeFilter, accountFilter, phoneFilter, sortBy]);
+        if (dateRange) fetchLogs();
+    }, [currentPage]);
 
     const handleRefresh = () => {
-        refreshCalls({
-            from: dateRange?.from,
-            to: dateRange?.to || dateRange?.from,
-            provider: 'vapi',
-            force: true
-        });
+        fetchLogs();
     };
 
     const handleDownloadExcel = () => {
@@ -347,12 +268,10 @@ export default function VoiceLogsPage() {
         document.body.removeChild(link);
     };
 
-    const paginatedCalls = calls.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
-
     useEffect(() => {
-        if (!paginatedCalls || paginatedCalls.length === 0) return;
+        if (!calls || calls.length === 0) return;
 
-        const callsToFetch = paginatedCalls.filter(c => telephonyCosts[c.id] === undefined && c.source !== 'elevenlabs');
+        const callsToFetch = calls.filter(c => telephonyCosts[c.id] === undefined && c.source !== 'elevenlabs');
         if (callsToFetch.length === 0) return;
 
         setTelephonyCosts(prev => {
@@ -382,19 +301,19 @@ export default function VoiceLogsPage() {
             }
         })
         .catch(err => console.error("Error fetching telephony costs", err));
-    }, [paginatedCalls]);
+    }, [calls]);
 
     return (
         <div className="space-y-6 pb-10 relative min-h-[500px]">
             {/* Absolute Full-Screen Loader for Initial Load */}
-            {loading && allCallsMapped.length === 0 && (
+            {loading && calls.length === 0 && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-transparent backdrop-blur-sm">
                     <ASLoader transparent />
                 </div>
             )}
             
             {/* Subtle Overlay Loader for Background Refreshes (Filtering) */}
-            {loading && allCallsMapped.length > 0 && (
+            {loading && calls.length > 0 && (
                 <div className="absolute inset-0 z-40 flex items-center justify-center bg-transparent backdrop-blur-[1px] pointer-events-none">
                     <div className="bg-white/10 p-6 rounded-2xl backdrop-blur-sm flex flex-col items-center gap-3">
                         <ASLoader transparent />
@@ -505,13 +424,13 @@ export default function VoiceLogsPage() {
                             {calls.length === 0 && !loading ? (
                                 <TableRow><TableCell colSpan={9} className="h-24 text-center text-slate-500 font-medium">No calls matching filters.</TableCell></TableRow>
                             ) : (
-                                (paginatedCalls as any[]).map((call) => (
+                                (calls as any[]).map((call) => (
                                     <TableRow
                                         key={call.id}
                                         className="cursor-pointer hover:bg-slate-50/50 transition-colors"
                                         onClick={() => { setSelectedCall(call); setModalOpen(true); }}
                                     >
-                                        <DynamicRowCells call={call} leads={leads} telephonyCost={telephonyCosts[call.id]} />
+                                        <DynamicRowCells call={call} telephonyCost={telephonyCosts[call.id]} />
                                         <TableCell>
                                             <Badge 
                                                 variant="outline" 
@@ -537,14 +456,14 @@ export default function VoiceLogsPage() {
 
                 <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                     <p className="text-sm text-slate-500">
-                        Showing <span className="font-bold text-slate-900">{calls.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}-{Math.min(currentPage * itemsPerPage, calls.length)}</span> of {calls.length} calls
+                        Showing <span className="font-bold text-slate-900">{totalCalls > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}-{Math.min(currentPage * itemsPerPage, totalCalls)}</span> of {totalCalls} calls
                     </p>
                     <div className="flex items-center gap-2">
                         <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
                             <ChevronLeft className="h-4 w-4" />
                         </Button>
                         <span className="text-sm font-medium px-3 py-1">Page {currentPage}</span>
-                        <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => setCurrentPage(p => Math.min(Math.ceil(calls.length / itemsPerPage), p + 1))} disabled={currentPage >= Math.ceil(calls.length / itemsPerPage)}>
+                        <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => setCurrentPage(p => Math.min(Math.ceil(totalCalls / itemsPerPage), p + 1))} disabled={currentPage >= Math.ceil(totalCalls / itemsPerPage)}>
                             <ChevronRight className="h-4 w-4" />
                         </Button>
                     </div>

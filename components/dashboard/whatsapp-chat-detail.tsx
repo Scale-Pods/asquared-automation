@@ -14,15 +14,92 @@ import {
     Check
 } from "lucide-react";
 import { ConsolidatedLead } from "@/lib/leads-utils";
-import { useData } from "@/context/DataContext";
 
 interface WhatsAppChatDetailProps {
     customerId: string;
     onClose?: () => void;
 }
 
+function buildTimeline(leadData: any): any[] {
+    const timeline: any[] = [];
+
+    const parseMsg = (raw: any, label: string, type: 'bot' | 'user', sequence: number) => {
+        if (!raw || !String(raw).trim()) return null;
+        const content = String(raw).trim();
+
+        const isoRegex = /\n{1,2}(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.+)$/;
+        const isoMatch = content.match(isoRegex);
+        if (isoMatch) {
+            return {
+                type,
+                content: content.replace(isoRegex, '').trim(),
+                label,
+                date: isoMatch[1],
+                sequence
+            };
+        }
+
+        const lines = content.split('\n');
+        const lastLine = lines[lines.length - 1].trim();
+        const spaceDateRegex = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/;
+        if (lines.length > 1 && spaceDateRegex.test(lastLine)) {
+            const d = new Date(lastLine.replace(' ', 'T'));
+            if (!isNaN(d.getTime())) {
+                return {
+                    type,
+                    content: lines.slice(0, -1).join('\n').trim() || 'Message Received',
+                    label,
+                    date: d.toISOString(),
+                    sequence
+                };
+            }
+        }
+
+        return { type, content, label, date: null, sequence };
+    };
+
+    const parseTsDate = (tsRaw: string | null): string | null => {
+        if (!tsRaw) return null;
+        const parts = tsRaw.split(' - ');
+        if (parts.length < 2) return null;
+        const datePart = parts[1].trim();
+        const d = new Date(datePart.replace(/(^\d{1,2})\/(\d{1,2})\/(\d{4})/, '$3-$2-$1').replace(' ', 'T'));
+        return isNaN(d.getTime()) ? null : d.toISOString();
+    };
+
+    const f = leadData;
+    let seq = 1;
+
+    for (let i = 1; i <= 12; i++) {
+        const raw = f[`W.P_${i}`] || f.stage_data?.[`WhatsApp ${i}`];
+        if (!raw) continue;
+        const tsRaw: string | null = f[`W.P_${i} TS`] || null;
+        const msg = parseMsg(raw, `W.P_${i}`, 'bot', seq++);
+        if (msg) {
+            (msg as any).tsStatus = tsRaw;
+            if (!msg.date) msg.date = parseTsDate(tsRaw);
+            timeline.push(msg);
+        }
+    }
+
+    const initialFollowUpRaw = f["W.P_FollowUp"] || f.stage_data?.["WhatsApp FollowUp"];
+    const initialFollowUpMsg = parseMsg(initialFollowUpRaw, "W.P_FollowUp", "bot", seq++);
+    if (initialFollowUpMsg) timeline.push(initialFollowUpMsg);
+
+    for (let i = 1; i <= 10; i++) {
+        const rRaw = f[`W.P_Replied_${i}`];
+        const rMsg = parseMsg(rRaw, `W.P_Replied_${i}`, 'user', seq++);
+        if (rMsg) timeline.push(rMsg);
+
+        const fRaw = f[`W.P_FollowUp_${i}`];
+        const fMsg = parseMsg(fRaw, `W.P_FollowUp_${i}`, 'bot', seq++);
+        if (fMsg) timeline.push(fMsg);
+    }
+
+    return timeline;
+}
+
 export function WhatsAppChatDetail({ customerId, onClose }: WhatsAppChatDetailProps) {
-    const { leads: allLeads, loadingLeads } = useData();
     const [lead, setLead] = useState<ConsolidatedLead | null>(null);
     const [loading, setLoading] = useState(true);
     const [messages, setMessages] = useState<any[]>([]);
@@ -31,7 +108,6 @@ export function WhatsAppChatDetail({ customerId, onClose }: WhatsAppChatDetailPr
     const handleCopyLink = () => {
         if (!lead) return;
         const baseUrl = window.location.origin;
-        // Construct the URL using the ID as it's more stable for routing
         const shareId = lead.id || lead.phone;
         const shareUrl = `${baseUrl}/dashboard/whatsapp/chat/${encodeURIComponent(shareId)}`;
         
@@ -43,7 +119,6 @@ export function WhatsAppChatDetail({ customerId, onClose }: WhatsAppChatDetailPr
                 console.error("Failed to copy link:", err);
             });
         } else {
-            // Fallback for non-secure contexts
             const textArea = document.createElement("textarea");
             textArea.value = shareUrl;
             document.body.appendChild(textArea);
@@ -60,117 +135,44 @@ export function WhatsAppChatDetail({ customerId, onClose }: WhatsAppChatDetailPr
     };
 
     useEffect(() => {
-        if (loadingLeads) {
+        async function fetchLead() {
             setLoading(true);
-            return;
-        }
+            try {
+                const searchVal = String(customerId).toLowerCase().trim();
+                const res = await fetch(`/api/whatsapp/leads?search=${encodeURIComponent(searchVal)}&pageSize=20`);
+                if (res.ok) {
+                    const data = await res.json();
+                    const leadsList = data.leads || [];
+                    const searchReplaced = searchVal.replace(/\D/g, '');
+                    const found = leadsList.find((l: any) => {
+                        if (String(l.id || '').toLowerCase() === searchVal) return true;
+                        if (l.phone) {
+                            const lPhoneDigits = String(l.phone).replace(/\D/g, '');
+                            if (searchReplaced && lPhoneDigits === searchReplaced) return true;
+                        }
+                        return false;
+                    }) || leadsList[0];
 
-        const searchVal = String(customerId).toLowerCase().trim();
-        const found = allLeads.find(l => {
-            if (String(l.id).toLowerCase() === searchVal) return true;
-            if (l.phone) {
-                const lPhoneReplaced = String(l.phone).replace(/\D/g, '');
-                const searchReplaced = searchVal.replace(/\D/g, '');
-                if (searchReplaced && lPhoneReplaced === searchReplaced) return true;
-            }
-            return false;
-        });
-
-        if (found) {
-            setLead(found);
-            const timeline: any[] = [];
-
-            const parseMsg = (raw: any, label: string, type: 'bot' | 'user', sequence: number) => {
-                if (!raw || !String(raw).trim()) return null;
-                const content = String(raw).trim();
-
-                // Match ISO timestamp after one or two newlines at end of message
-                const isoRegex = /\n{1,2}(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.+)$/;
-                const isoMatch = content.match(isoRegex);
-                if (isoMatch) {
-                    return {
-                        type,
-                        content: content.replace(isoRegex, '').trim(),
-                        label,
-                        date: isoMatch[1],
-                        sequence
-                    };
-                }
-
-                // Match "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD HH:MM:SS.mmm" on the last line
-                const lines = content.split('\n');
-                const lastLine = lines[lines.length - 1].trim();
-                const spaceDateRegex = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/;
-                if (lines.length > 1 && spaceDateRegex.test(lastLine)) {
-                    const d = new Date(lastLine.replace(' ', 'T'));
-                    if (!isNaN(d.getTime())) {
-                        return {
-                            type,
-                            content: lines.slice(0, -1).join('\n').trim() || 'Message Received',
-                            label,
-                            date: d.toISOString(),
-                            sequence
-                        };
+                    if (found) {
+                        setLead(found);
+                        setMessages(buildTimeline(found));
+                    } else {
+                        setLead(null);
+                        setMessages([]);
                     }
+                } else {
+                    setLead(null);
+                    setMessages([]);
                 }
-
-                return { type, content, label, date: null, sequence };
-            };
-
-            // Helper: extract date from a TS field like "Delivered - 2026-03-12 10:00:00"
-            const parseTsDate = (tsRaw: string | null): string | null => {
-                if (!tsRaw) return null;
-                const parts = tsRaw.split(' - ');
-                if (parts.length < 2) return null;
-                const datePart = parts[1].trim();
-                const d = new Date(datePart.replace(/(^\d{1,2})\/(\d{1,2})\/(\d{4})/, '$3-$2-$1').replace(' ', 'T'));
-                return isNaN(d.getTime()) ? null : d.toISOString();
-            };
-
-            const f = found as any;
-            let seq = 1;
-
-            // Drip sequence W.P_1 → W.P_12  (skip missing slots, no duplicates)
-            for (let i = 1; i <= 12; i++) {
-                const raw = f[`W.P_${i}`] || f.stage_data?.[`WhatsApp ${i}`];
-                if (!raw) continue;
-                const tsRaw: string | null = f[`W.P_${i} TS`] || null;
-                const msg = parseMsg(raw, `W.P_${i}`, 'bot', seq++);
-                if (msg) {
-                    (msg as any).tsStatus = tsRaw;
-                    // If content had no embedded timestamp, fall back to the TS field date
-                    if (!msg.date) msg.date = parseTsDate(tsRaw);
-                    timeline.push(msg);
-                }
+            } catch (err) {
+                console.error("Failed to fetch lead", err);
+                setLead(null);
+                setMessages([]);
             }
-
-            // Bot follow-up after initial reply
-            const initialFollowUpRaw = f["W.P_FollowUp"] || f.stage_data?.["WhatsApp FollowUp"];
-            const initialFollowUpMsg = parseMsg(initialFollowUpRaw, "W.P_FollowUp", "bot", seq++);
-            if (initialFollowUpMsg) timeline.push(initialFollowUpMsg);
-
-            // Paired reply / follow-up rounds (up to 10)
-            for (let i = 1; i <= 10; i++) {
-                const rRaw = f[`W.P_Replied_${i}`];
-                const rMsg = parseMsg(rRaw, `W.P_Replied_${i}`, 'user', seq++);
-                if (rMsg) timeline.push(rMsg);
-
-                const fRaw = f[`W.P_FollowUp_${i}`];
-                const fMsg = parseMsg(fRaw, `W.P_FollowUp_${i}`, 'bot', seq++);
-                if (fMsg) timeline.push(fMsg);
-            }
-
-            // No date sorting — insertion sequence IS the correct conversation order:
-            // W.P_1 → W.P_N drips, then WhatsApp Replied, then W.P_FollowUp,
-            // then paired W.P_Replied_i / W.P_FollowUp_i rounds.
-
-            setMessages(timeline);
-        } else {
-            setLead(null);
-            setMessages([]);
+            setLoading(false);
         }
-        setLoading(false);
-    }, [customerId, allLeads, loadingLeads]);
+        fetchLead();
+    }, [customerId]);
 
     if (loading) {
         return (

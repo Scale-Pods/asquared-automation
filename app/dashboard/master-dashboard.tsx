@@ -42,59 +42,47 @@ import {
     Legend
 } from 'recharts';
 import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { TotalRepliesView } from "@/components/dashboard/total-replies-view";
+import { TotalRepliesView, type ReplyData } from "@/components/dashboard/total-replies-view";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { subDays, startOfDay, endOfDay } from "date-fns";
-import { calculateDuration, formatDuration } from "@/lib/utils";
+import { subDays } from "date-fns";
 import { ASLoader } from "@/components/as-loader";
-import { useData } from "@/context/DataContext";
+import { fetchCached } from "@/lib/use-cached-fetch";
 
+interface AnalyticsResponse {
+    normalLeadsCount: number;
+    emailCount: number;
+    whatsappReachouts: number;
+    totalVoiceCalls: number;
+    ownerVoiceCalls: number;
+    totalVoiceSeconds: number;
+    voiceMinutesString: string;
+    ownerVoiceDurationString: string;
+    totalReplies: number;
+    totalOwnerLeads: number;
+    ownerWhatsappReachouts: number;
+    ownerTotalReplies: number;
+    oldestLeadDate: string;
+    oldestEmailDate: string;
+    oldestWPDate: string;
+    ownerLeadsSince: string;
+    ownerWhatsappSince: string;
+    ownerVoiceSince: string;
+    ownerRepliesSince: string;
+    acquisitionChartData: { name: string; leads: number }[];
+    replyLeads: any[];
+    replyData?: ReplyData[];
+}
 
-
-const parseMsg = (raw: any): { date: Date | null, content: string } => {
-    if (!raw || !String(raw).trim()) return { date: null, content: "" };
-    const content = String(raw).trim();
-
-    // 1. Direct ISO
-    if (content.length >= 10 && !isNaN(new Date(content).getTime())) {
-        if (content.includes('T') || (content.includes('-') && content.includes(':'))) {
-            return { date: new Date(content), content: "" };
-        }
-    }
-
-    // 2. ISO at the end (with any number of newlines/spaces)
-    // Matches YYYY-MM-DDTHH:MM:SS.sssZ or similar
-    const isoRegex = /[\n\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*)$/;
-    const isoMatch = content.match(isoRegex);
-    if (isoMatch) {
-        const d = new Date(isoMatch[1]);
-        if (!isNaN(d.getTime())) {
-            return {
-                date: d,
-                content: content.replace(isoRegex, '').trim()
-            };
-        }
-    }
-
-    // 3. Space-separated date at the end (YYYY-MM-DD HH:MM:SS)
-    const lines = content.split('\n');
-    const lastLine = lines[lines.length - 1].trim();
-    if (lastLine.includes('-') && lastLine.includes(':')) {
-        const lastLineDate = new Date(lastLine.replace(' ', 'T'));
-        if (!isNaN(lastLineDate.getTime())) {
-            return {
-                date: lastLineDate,
-                content: lines.length > 1 ? lines.slice(0, -1).join('\n').trim() : content
-            };
-        }
-    }
-
-    return { date: null, content: content };
-};
-
+interface SourceStats {
+    intro: number;
+    intro_uk: number;
+    follow_up: number;
+    follow_up_uk: number;
+    leads: number;
+}
 
 export default function MasterDashboard() {
     const [isRepliesModalOpen, setIsRepliesModalOpen] = useState(false);
@@ -104,405 +92,64 @@ export default function MasterDashboard() {
         from: subDays(new Date(), 7),
         to: new Date()
     });
+    const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [sourceStats, setSourceStats] = useState<SourceStats>({ intro: 0, intro_uk: 0, follow_up: 0, follow_up_uk: 0, leads: 0 });
+    const [voiceBalance, setVoiceBalance] = useState<any>(null);
+    const [didBalance, setDidBalance] = useState<any>(null);
 
-    const { 
-        leads: allLeads, 
-        calls: allCalls, 
-        ownerLeads,
-        allTimeVoiceCount,
-        allTimeOwnerVoiceCount,
-        loadingLeads, 
-        loadingCalls, 
-        loadingOwners,
-        refreshLeads, 
-        refreshCalls, 
-        refreshOwners,
-        refreshAll, 
-        loadingBalances 
-    } = useData();
-    const [leads, setLeads] = useState<any[]>([]);
-    const [acquisitionChartData, setAcquisitionChartData] = useState<any[]>([]);
-    const [stats, setStats] = useState({
-        totalLeads: 0,
-        introCount: 0,
-        introUkCount: 0,
-        followUpCount: 0,
-        followUpUkCount: 0,
-        leadsTableCount: 0,
-        totalEmails: 0,
-        totalWhatsApp: 0,
-        totalVoice: 0,
-        totalReplies: 0,
-        voiceMinutesString: "0m",
-        totalVoiceSeconds: 0,
-        totalVoiceCalls: 0,
-        whatsappUniqueSent: 0,
-        oldestLeadDate: "",
-        oldestEmailDate: "",
-        oldestWPDate: "",
-        // Owner stats
-        totalOwnerLeads: 0,
-        ownerWhatsappReachouts: 0,
-        ownerVoiceCalls: 0,
-        ownerTotalReplies: 0,
-        ownerLeadsSince: "Real-time",
-        ownerWhatsappSince: "Real-time",
-        ownerVoiceSince: "Real-time",
-        ownerRepliesSince: "Real-time"
-    });
-    const [replyLeads, setReplyLeads] = useState<any[]>([]);
-    const loading = loadingLeads || loadingCalls || loadingOwners;
-
-    // Trigger server-side refresh when date range changes
+    // Fetch full analytics from server
     useEffect(() => {
-        if (!refreshCalls || !refreshLeads) return;
-        
-        const params = {
-            from: dateRange?.from,
-            to: dateRange?.to,
-            provider: 'vapi'
-        };
-        
-        refreshCalls(params);
-        refreshLeads(params);
-        refreshOwners(params);
-    }, [dateRange, refreshCalls, refreshLeads, refreshOwners]);
+        if (!dateRange?.from) return;
+        setLoading(true);
+        const q = new URLSearchParams({
+            from: new Date(dateRange.from).toISOString(),
+            to: new Date(dateRange.to || dateRange.from).toISOString()
+        });
+        Promise.all([
+            fetchCached(`/api/dashboard/analytics?${q}`),
+            fetch('/api/vapi/balance').then(r => r.ok ? r.json() : null),
+            fetch('/api/did/balance').then(r => r.ok ? r.json() : null)
+        ]).then(([analyticsData, vapiData, didData]) => {
+            setAnalytics(analyticsData);
+            if (vapiData) setVoiceBalance(vapiData);
+            if (didData) setDidBalance(didData);
+        }).catch(err => console.error("Analytics fetch error:", err))
+        .finally(() => setLoading(false));
+    }, [dateRange]);
+
+    // Fetch source-table aggregation stats
+    useEffect(() => {
+        if (!dateRange?.from) return;
+        const q = new URLSearchParams({
+            from: new Date(dateRange.from).toISOString(),
+            to: new Date(dateRange.to || dateRange.from).toISOString()
+        });
+        fetchCached(`/api/leads/stats?${q}`)
+            .then(data => {
+                if (data?.sourceCounts) setSourceStats(data.sourceCounts);
+            })
+            .catch(() => {});
+    }, [dateRange]);
 
     const handleDateUpdate = ({ range, label }: { range: any, label?: string }) => {
-        if (label) {
-            setDateLabel(label);
-        }
+        if (label) setDateLabel(label);
         setDateRange(range);
     };
 
-    useEffect(() => {
-        const calculateStats = async () => {
-            if (loadingLeads) return;
-
-            try {
-                const fromDate = dateRange?.from ? startOfDay(new Date(dateRange.from)) : null;
-                const toDate = dateRange?.to ? endOfDay(new Date(dateRange.to)) : (fromDate ? endOfDay(new Date(fromDate)) : null);
-
-                const isWithinRange = (d: Date | null) => {
-                    if (!fromDate || !toDate) return true;
-                    if (!d) return false;
-
-                    // Standard time comparison
-                    if (d >= fromDate && d <= toDate) return true;
-
-                    // Local day comparison (YYYY-MM-DD) to handle timezone boundaries correctly
-                    const toYYYYMMDD = (date: Date) => {
-                        const y = date.getFullYear();
-                        const m = String(date.getMonth() + 1).padStart(2, '0');
-                        const day = String(date.getDate()).padStart(2, '0');
-                        return `${y}-${m}-${day}`;
-                    };
-                    
-                    const dStr = toYYYYMMDD(d);
-                    const fStr = toYYYYMMDD(fromDate);
-                    const tStr = toYYYYMMDD(toDate);
-                    return dStr >= fStr && dStr <= tStr;
-                };
-
-                const parseWPStamp = (tsRaw: any): Date | null => {
-                    if (!tsRaw || !tsRaw.includes(' - ')) return null;
-                    const parts = tsRaw.split(' - ');
-                    const datePart = parts[parts.length - 1].trim(); 
-                    const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-                    if (!match) return null;
-                    // Format is DD/MM/YYYY (match[1]=D, match[2]=M, match[3]=Y)
-                    const d = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-                    return isNaN(d.getTime()) ? null : d;
-                };
-
-                const getLeadLatestWPActivity = (lead: any) => {
-                    const wp1Ts = lead["W.P_1 TS"];
-                    const wp1Parsed = parseWPStamp(wp1Ts);
-                    if (wp1Parsed) return wp1Parsed;
-
-                    let latest = new Date(lead.created_at);
-                    const stageData = lead.stage_data || {};
-                    const getD = (raw: any) => parseMsg(raw).date;
-
-                    for (let i = 1; i <= 12; i++) {
-                        let d = getD(lead[`W.P_${i}`] || stageData[`WhatsApp ${i}`]);
-                        const tsRaw = lead[`W.P_${i} TS`];
-                        if (!d && tsRaw && tsRaw.includes(' - ')) {
-                            const tsDate = parseWPStamp(tsRaw);
-                            if (tsDate) d = tsDate;
-                        }
-                        if (d && d > latest) latest = d;
-                    }
-                    const rd = getD(lead.whatsapp_replied || stageData["WhatsApp Replied"]);
-                    if (rd && rd > latest) latest = rd;
-                    const fd = getD(lead["W.P_FollowUp"] || stageData["WhatsApp FollowUp"]);
-                    if (fd && fd > latest) latest = fd;
-                    for (let i = 1; i <= 10; i++) {
-                        const d1 = getD(lead[`W.P_Replied_${i}`]);
-                        if (d1 && d1 > latest) latest = d1;
-                        const d2 = getD(lead[`W.P_FollowUp_${i}`]);
-                        if (d2 && d2 > latest) latest = d2;
-                    }
-                    return latest;
-                };
-
-                // Apply Date Filtering for Leads (Created In Range)
-                const filteredLeads = allLeads.filter((lead: any) => {
-                    const leadDate = new Date(lead.created_at || 0);
-                    return isWithinRange(leadDate);
-                });
-
-                setLeads(filteredLeads);
-
-                // Per-source-table counts (from source_table field)
-                const srcIntro = allLeads.filter(l => l.source_table === "intro").length;
-                const srcIntroUk = allLeads.filter(l => l.source_table === "intro_uk").length;
-                const srcFollowUp = allLeads.filter(l => l.source_table === "follow_up").length;
-                const srcFollowUpUk = allLeads.filter(l => l.source_table === "follow_up_uk").length;
-                const srcLeads = allLeads.filter(l => String(l.source_table || "").startsWith("leads")).length;
-
-                // Acquisition Chart
-                const acquisitionMap: { [key: string]: number } = {};
-                let startDate = dateRange?.from ? new Date(dateRange.from) : null;
-                let endDate = dateRange?.to ? new Date(dateRange.to) : new Date();
-
-                if (!startDate) {
-                    startDate = subDays(new Date(), 7);
-                }
-
-                const current = new Date(startDate);
-                current.setHours(0, 0, 0, 0);
-                const end = new Date(endDate);
-                end.setHours(0, 0, 0, 0);
-
-                while (current <= end) {
-                    const dateStr = current.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                    acquisitionMap[dateStr] = 0;
-                    current.setDate(current.getDate() + 1);
-                }
-
-                filteredLeads.forEach((lead: any) => {
-                    const date = new Date(lead.created_at || Date.now());
-                    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                    if (acquisitionMap[dateStr] !== undefined) acquisitionMap[dateStr]++;
-                });
-
-                setAcquisitionChartData(Object.entries(acquisitionMap).map(([name, leads]) => ({ name, leads })));
-
-                // 1. Total Leads (Normal: Intro, Followup, Nurture)
-                const normalLeads = allLeads.filter((l: any) => 
-                    l.source_loop !== "Master Leads" && 
-                    l.source_loop !== "Master" && 
-                    isWithinRange(new Date(l.created_at))
-                );
-
-                // Find oldest lead date for the label
-                let oldestLeadStr = "Real-time";
-                if (normalLeads.length > 0) {
-                    const oldest = normalLeads.reduce((min, lead) => {
-                        const d = new Date(lead.created_at);
-                        return d < min ? d : min;
-                    }, new Date(normalLeads[0].created_at));
-                    oldestLeadStr = `Since ${oldest.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-                }
-
-                // 2. Total Whatsapp Reachouts (W.P_1 from loops) - STRICT
-                let whatsappChatsCount = 0;
-                let minWPDate: Date | null = null;
-                allLeads.forEach((lead: any) => {
-                    // Only for normal loops
-                    if (lead.source_loop === "Master Leads" || lead.source_loop === "Master") return;
-
-                    const wp1Val = lead["W.P_1"];
-                    if (!wp1Val || wp1Val === "" || wp1Val === "No") return;
-
-                    const trimmed = String(wp1Val).trim();
-                    let reachoutDate: Date | null = null;
-                    
-                    // Try parsing as direct ISO timestamp
-                    const dObj = new Date(trimmed);
-                    if (!isNaN(dObj.getTime()) && (trimmed.includes('T') || (trimmed.includes('-') && trimmed.includes(':')))) {
-                        reachoutDate = dObj;
-                    } else {
-                        reachoutDate = parseMsg(trimmed).date;
-                    }
-
-                    // Fallback to W.P_1 TS if still no date
-                    if (!reachoutDate) {
-                        const wp1Ts = lead["W.P_1 TS"];
-                        reachoutDate = parseWPStamp(wp1Ts);
-                    }
-                    
-                    if (reachoutDate && isWithinRange(reachoutDate)) {
-                        whatsappChatsCount++;
-                        if (!minWPDate || reachoutDate < minWPDate) minWPDate = reachoutDate;
-                    }
-                });
-
-                const _minWPDate = minWPDate as Date | null;
-                const oldestWPStr = _minWPDate
-                    ? `Since ${_minWPDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
-                    : "Real-time";
-
-                // 3. Total Replies (WP_Replied_track from loops)
-                let totalRepliesCount = 0;
-                const leadsWhoRepliedInRange: any[] = [];
-                allLeads.forEach((lead: any) => {
-                    // Only from Intro, Followup, Nurture loops
-                    if (lead.source_loop === "Master Leads" || lead.source_loop === "Master") return;
-
-                    const replyVal = lead["WP_Replied_track"];
-                    if (replyVal && replyVal !== "" && String(replyVal).toLowerCase() !== "no") {
-                        const parsed = parseMsg(replyVal);
-                        let isRepliedInRange = false;
-
-                        // If it has a timestamp, use it for the date filter
-                        if (parsed.date) {
-                            if (isWithinRange(parsed.date)) isRepliedInRange = true;
-                        } else if (String(replyVal).toLowerCase() === "yes" || String(replyVal).toLowerCase() === "replied") {
-                            // Legacy "yes" - connect to lead creation date for filtering
-                            if (isWithinRange(new Date(lead.created_at))) isRepliedInRange = true;
-                        }
-
-                        if (isRepliedInRange) {
-                            totalRepliesCount++;
-                            leadsWhoRepliedInRange.push(lead);
-                        }
-                    }
-                });
-
-                // 4. Total Voice Calls (from Call Logs for accuracy)
-                let totalVoiceCallsCount = 0;
-                let ownerVoiceCallsCount = 0;
-                let totalVoiceSeconds = 0;
-
-                if (!loadingCalls && Array.isArray(allCalls)) {
-                    allCalls.forEach(call => {
-                        // Only count Vapi calls for these metrics
-                        if (call.source === 'vapi') {
-                            if (call.vapiAccount === 'owners') {
-                                ownerVoiceCallsCount++;
-                            } else {
-                                totalVoiceCallsCount++;
-                            }
-                        }
-                        totalVoiceSeconds += calculateDuration(call);
-                    });
-                }
-
-                // Outreach (Emails - keeping existing logic but simplified)
-                let emailCount = 0;
-                let minEmailDate: Date | null = null;
-                allLeads.forEach((lead: any) => {
-                    const stages = lead.stages_passed || [];
-                    const stageData = lead.stage_data || {};
-                    stages.forEach((stage: string) => {
-                        if (stage.toLowerCase().trim().startsWith("email_")) {
-                            const d = parseMsg(stageData[stage]).date || new Date(lead.updated_at || lead.created_at);
-                            if (isWithinRange(d)) {
-                                emailCount++;
-                                if (!minEmailDate || d < minEmailDate) minEmailDate = d;
-                            }
-                        }
-                    });
-                });
-
-                const _minEmailDate = minEmailDate as Date | null;
-                const oldestEmailStr = _minEmailDate
-                    ? `Since ${_minEmailDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
-                    : "Real-time";
-
-                setLeads(normalLeads);
-                setReplyLeads(leadsWhoRepliedInRange);
-                
-                setStats(prev => ({
-                    ...prev,
-                    totalLeads: normalLeads.length,
-                    introCount: srcIntro,
-                    introUkCount: srcIntroUk,
-                    followUpCount: srcFollowUp,
-                    followUpUkCount: srcFollowUpUk,
-                    leadsTableCount: srcLeads,
-                    totalEmails: emailCount,
-                    totalWhatsApp: whatsappChatsCount,
-                    whatsappUniqueSent: whatsappChatsCount,
-                    totalVoice: totalVoiceCallsCount,
-                    voiceMinutesString: formatDuration(totalVoiceSeconds),
-                    totalVoiceSeconds: totalVoiceSeconds,
-                    totalVoiceCalls: totalVoiceCallsCount,
-                    totalReplies: totalRepliesCount,
-                    oldestLeadDate: oldestLeadStr,
-                    oldestEmailDate: oldestEmailStr,
-                    oldestWPDate: oldestWPStr,
-                }));
-
-                // Calculate Owner Stats
-                let ownerLeadsCount = 0;
-                let ownerWhatsappReachoutsCount = 0;
-                let ownerTotalRepliesCount = 0;
-                
-                let minOwnerLeadDate: Date | null = null;
-                let minOwnerWPDate: Date | null = null;
-                let minOwnerVoiceDate: Date | null = null;
-                let minOwnerReplyDate: Date | null = null;
-
-                (ownerLeads || []).forEach((o: any) => {
-                    // 1. Total Owner Leads
-                    ownerLeadsCount++;
-                    
-                    // 2. Whatsapp Reachouts (Check 'Whatsapp 1', 'Whatsapp 2')
-                    const wp1 = o["Whatsapp 1"] || o["Whatsapp_1"];
-                    const wp2 = o["Whatsapp 2"] || o["Whatsapp_2"];
-                    const wp1Date = parseMsg(wp1).date;
-                    const wp2Date = parseMsg(wp2).date;
-
-                    if ((wp1Date && isWithinRange(wp1Date)) || (wp2Date && isWithinRange(wp2Date))) {
-                        ownerWhatsappReachoutsCount++;
-                        const d = wp1Date || wp2Date;
-                        if (d && (!minOwnerWPDate || d < minOwnerWPDate)) minOwnerWPDate = d;
-                    }
-
-                    // 4. Replies (Check 'Replied' column)
-                    if (o.Replied && (String(o.Replied).toLowerCase() === 'yes' || String(o.Replied).toLowerCase() === 'replied')) {
-                        // Match based on contact date if possible, otherwise count
-                        ownerTotalRepliesCount++;
-                    }
-                });
-
-                const formatDateLabel = (d: Date | null) => d ? `Since ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : "Real-time";
-
-                setStats(prev => ({
-                    ...prev,
-                    totalOwnerLeads: ownerLeadsCount,
-                    ownerWhatsappReachouts: ownerWhatsappReachoutsCount,
-                    ownerVoiceCalls: ownerVoiceCallsCount,
-                    ownerTotalReplies: ownerTotalRepliesCount,
-                    ownerLeadsSince: formatDateLabel(minOwnerLeadDate),
-                    ownerWhatsappSince: formatDateLabel(minOwnerWPDate),
-                    ownerVoiceSince: formatDateLabel(minOwnerVoiceDate),
-                    ownerRepliesSince: formatDateLabel(minOwnerReplyDate)
-                }));
-
-            } catch (e) {
-                console.error("Dashboard calculation error", e);
-            }
-        };
-
-        calculateStats();
-    }, [dateRange, allLeads, allCalls, ownerLeads, loadingLeads, loadingCalls, loadingOwners]);
-
     const router = useRouter();
+    const s = analytics;
 
     // Derived Pie Chart Data
     const realServiceDistribution = [
-        { name: 'Email', value: stats.totalEmails, color: '#3b82f6' },
-        { name: 'WhatsApp', value: stats.totalWhatsApp, color: '#10b981' },
-        { name: 'Voice', value: stats.totalVoice, color: '#8b5cf6' },
+        { name: 'Email', value: s?.emailCount || 0, color: '#3b82f6' },
+        { name: 'WhatsApp', value: s?.whatsappReachouts || 0, color: '#10b981' },
+        { name: 'Voice', value: s?.totalVoiceCalls || 0, color: '#8b5cf6' },
     ];
 
     return (
         <div className="space-y-8 pb-10 relative min-h-[500px]">
-            {loading && leads.length === 0 && <ASLoader />}
+            {loading && <ASLoader />}
             {/* Header Section */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
@@ -516,7 +163,7 @@ export default function MasterDashboard() {
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 <MetricCard
                     title="Intro (US)"
-                    value={loading ? "..." : stats.introCount.toLocaleString()}
+                    value={loading ? "..." : sourceStats.intro.toLocaleString()}
                     change="source: intro"
                     isUp={true}
                     icon={<Users className="h-6 w-6" />}
@@ -526,7 +173,7 @@ export default function MasterDashboard() {
                 />
                 <MetricCard
                     title="Intro (UK)"
-                    value={loading ? "..." : stats.introUkCount.toLocaleString()}
+                    value={loading ? "..." : sourceStats.intro_uk.toLocaleString()}
                     change="source: intro_uk"
                     isUp={true}
                     icon={<Users className="h-6 w-6" />}
@@ -536,7 +183,7 @@ export default function MasterDashboard() {
                 />
                 <MetricCard
                     title="Follow Up (US)"
-                    value={loading ? "..." : stats.followUpCount.toLocaleString()}
+                    value={loading ? "..." : sourceStats.follow_up.toLocaleString()}
                     change="source: follow_up"
                     isUp={true}
                     icon={<MessageCircle className="h-6 w-6" />}
@@ -546,7 +193,7 @@ export default function MasterDashboard() {
                 />
                 <MetricCard
                     title="Follow Up (UK)"
-                    value={loading ? "..." : stats.followUpUkCount.toLocaleString()}
+                    value={loading ? "..." : sourceStats.follow_up_uk.toLocaleString()}
                     change="source: follow_up_uk"
                     isUp={true}
                     icon={<MessageCircle className="h-6 w-6" />}
@@ -554,25 +201,22 @@ export default function MasterDashboard() {
                     bg="bg-violet-50"
                     border="border-violet-100"
                 />
-                <MetricCard
-                    title="Leads Table"
-                    value={loading ? "..." : stats.leadsTableCount.toLocaleString()}
-                    change="source: leads"
-                    isUp={true}
-                    icon={<BarChart3 className="h-6 w-6" />}
-                    color="text-emerald-600"
-                    bg="bg-emerald-50"
-                    border="border-emerald-100"
-                    onClick={() => router.push('/dashboard/leads')}
-                />
             </div>
 
-            {/* Channel Metric Cards */}
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            {/* Normal Data Section */}
+            <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                    <div className="p-2 bg-blue-100 text-blue-700 rounded-lg">
+                        <BarChart3 className="h-5 w-5" />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900">Normal Data</h2>
+                    <p className="text-sm text-slate-400">Connected to: leads, intro, intro_uk, follow_up, follow_up_uk</p>
+                </div>
+                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 <MetricCard
                     title="Total Leads"
-                    value={loading ? "..." : stats.totalLeads.toLocaleString()}
-                    change={stats.oldestLeadDate}
+                    value={loading ? "..." : (s?.normalLeadsCount ?? 0).toLocaleString()}
+                    change={s?.oldestLeadDate ?? "..."}
                     isUp={true}
                     icon={<Users className="h-6 w-6" />}
                     color="text-blue-600"
@@ -582,8 +226,8 @@ export default function MasterDashboard() {
                 />
                 <MetricCard
                     title="Total Emails Sent"
-                    value={loading ? "..." : stats.totalEmails.toLocaleString()}
-                    change={stats.oldestEmailDate}
+                    value={loading ? "..." : (s?.emailCount ?? 0).toLocaleString()}
+                    change={s?.oldestEmailDate ?? "..."}
                     isUp={true}
                     icon={<Mail className="h-6 w-6" />}
                     color="text-emerald-600"
@@ -593,8 +237,8 @@ export default function MasterDashboard() {
                 />
                 <MetricCard
                     title="Total Whatsapp Reachouts"
-                    value={loading ? "..." : stats.totalWhatsApp.toLocaleString()}
-                    change={stats.oldestWPDate}
+                    value={loading ? "..." : (s?.whatsappReachouts ?? 0).toLocaleString()}
+                    change={s?.oldestWPDate ?? "..."}
                     isUp={true}
                     icon={<MessageCircle className="h-6 w-6" />}
                     color="text-purple-600"
@@ -604,8 +248,8 @@ export default function MasterDashboard() {
                 />
                 <MetricCard
                     title="Total Voice Calls"
-                    value={loading ? "..." : stats.totalVoiceCalls.toLocaleString()}
-                    change={stats.voiceMinutesString}
+                    value={loading ? "..." : (s?.totalVoiceCalls ?? 0).toLocaleString()}
+                    change={s?.voiceMinutesString ?? "..."}
                     isUp={true}
                     icon={<Activity className="h-6 w-6" />}
                     color="text-orange-600"
@@ -614,11 +258,11 @@ export default function MasterDashboard() {
                     onClick={() => router.push('/dashboard/voice')}
                     info="This shows Normal calls containing US, UK, UAE, and 1731 leads."
                 />
-                
+
                 <MetricCard
                     title="Total Replies"
-                    value={loading ? "..." : stats.totalReplies.toLocaleString()}
-                    change={`${stats.totalWhatsApp > 0 ? ((stats.totalReplies / stats.totalWhatsApp) * 100).toFixed(1) : 0}% Rate`}
+                    value={loading ? "..." : (s?.totalReplies ?? 0).toLocaleString()}
+                    change={`${(s?.whatsappReachouts ?? 0) > 0 ? (((s?.totalReplies ?? 0) / (s?.whatsappReachouts ?? 1)) * 100).toFixed(1) : 0}% Rate`}
                     isUp={true}
                     icon={<Expand className="h-6 w-6" />}
                     color="text-indigo-600"
@@ -639,6 +283,7 @@ export default function MasterDashboard() {
                     </Button>}
                 />
             </div>
+            </div>
 
             {/* Owner Leads Data Section */}
             <div className="space-y-4">
@@ -651,8 +296,8 @@ export default function MasterDashboard() {
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
                     <MetricCard
                         title="Total Owner Leads"
-                        value={loading ? "..." : stats.totalOwnerLeads.toLocaleString()}
-                        change={stats.ownerLeadsSince}
+                        value={loading ? "..." : (s?.totalOwnerLeads ?? 0).toLocaleString()}
+                        change={s?.ownerLeadsSince ?? "..."}
                         isUp={true}
                         icon={<Users className="h-6 w-6" />}
                         color="text-amber-600"
@@ -661,8 +306,8 @@ export default function MasterDashboard() {
                     />
                     <MetricCard
                         title="Total Whatsapp Reachouts (owner)"
-                        value={loading ? "..." : stats.ownerWhatsappReachouts.toLocaleString()}
-                        change={stats.ownerWhatsappSince}
+                        value={loading ? "..." : (s?.ownerWhatsappReachouts ?? 0).toLocaleString()}
+                        change={s?.ownerWhatsappSince ?? "..."}
                         isUp={true}
                         icon={<MessageCircle className="h-6 w-6" />}
                         color="text-emerald-600"
@@ -671,8 +316,8 @@ export default function MasterDashboard() {
                     />
                     <MetricCard
                         title="Total Voice Calls (owner)"
-                        value={loading ? "..." : stats.ownerVoiceCalls.toLocaleString()}
-                        change={stats.ownerVoiceSince}
+                        value={loading ? "..." : (s?.ownerVoiceCalls ?? 0).toLocaleString()}
+                        change={s?.ownerVoiceSince ?? "..."}
                         isUp={true}
                         icon={<Phone className="h-6 w-6" />}
                         color="text-blue-600"
@@ -682,8 +327,8 @@ export default function MasterDashboard() {
                     />
                     <MetricCard
                         title="Total Replies (owner)"
-                        value={loading ? "..." : stats.ownerTotalReplies.toLocaleString()}
-                        change={stats.ownerRepliesSince}
+                        value={loading ? "..." : (s?.ownerTotalReplies ?? 0).toLocaleString()}
+                        change={s?.ownerRepliesSince ?? "..."}
                         isUp={true}
                         icon={<MessageCircle className="h-6 w-6" />}
                         color="text-purple-600"
@@ -706,7 +351,7 @@ export default function MasterDashboard() {
                             Close
                         </Button>
                     </div>
-                    <TotalRepliesView leads={replyLeads} />
+                    <TotalRepliesView leads={s?.replyLeads ?? []} replyData={s?.replyData} />
                 </div>
             )}
 
@@ -717,7 +362,7 @@ export default function MasterDashboard() {
                         <DialogTitle>Total Replies - Detailed View</DialogTitle>
                     </DialogHeader>
                     <div className="py-4">
-                        <TotalRepliesView leads={replyLeads} />
+                        <TotalRepliesView leads={s?.replyLeads ?? []} replyData={s?.replyData} />
                     </div>
                 </DialogContent>
             </Dialog>
@@ -739,7 +384,7 @@ export default function MasterDashboard() {
                     <CardContent className="pt-4">
                         <div className="w-full" style={{ height: 350, minHeight: 350 }}>
                             <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={acquisitionChartData}>
+                                <AreaChart data={s?.acquisitionChartData ?? []}>
                                     <defs>
                                         <linearGradient id="colorLeads" x1="0" y1="0" x2="0" y2="1">
                                             <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1} />
@@ -850,4 +495,3 @@ function MetricCard({ title, value, change, isUp, icon, color, bg, border, onCli
         </Card>
     );
 }
-

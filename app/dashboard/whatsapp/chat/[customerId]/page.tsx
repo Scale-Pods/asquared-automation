@@ -3,7 +3,6 @@
 import { use, useEffect, useState } from "react";
 import { WhatsAppChatDetail } from "@/components/dashboard/whatsapp-chat-detail";
 import { OwnerChatDetail } from "@/components/dashboard/owner-chat-detail";
-import { useData } from "@/context/DataContext";
 import { ASLoader } from "@/components/as-loader";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, MessageSquare } from "lucide-react";
@@ -12,56 +11,69 @@ import Link from "next/link";
 export default function CustomerDetailPage({ params }: { params: Promise<{ customerId: string }> }) {
     const { customerId } = use(params);
     const decodedCustomerId = decodeURIComponent(customerId);
-    const { leads, ownerLeads, loadingLeads, loadingOwners } = useData();
     
+    const [loading, setLoading] = useState(true);
     const [foundType, setFoundType] = useState<"lead" | "owner" | "none" | "searching">("searching");
     const [foundOwner, setFoundOwner] = useState<any>(null);
 
     useEffect(() => {
-        if (loadingLeads || loadingOwners) return;
+        async function findLead() {
+            setLoading(true);
+            setFoundType("searching");
 
-        const searchVal = decodedCustomerId.toLowerCase().trim();
-        const searchReplaced = searchVal.replace(/\D/g, '');
+            const searchVal = decodedCustomerId.toLowerCase().trim();
+            const searchReplaced = searchVal.replace(/\D/g, '');
 
-        // 1. Check leads
-        const leadFound = leads.find(l => {
-            const lId = String(l.id || "").toLowerCase();
-            if (lId === searchVal) return true;
-            
-            if (l.phone) {
-                const lPhoneReplaced = String(l.phone).replace(/\D/g, '');
-                if (searchReplaced && lPhoneReplaced === searchReplaced) return true;
+            const exactMatch = (item: any, fields: string[]) => {
+                for (const field of fields) {
+                    const val = String(item[field] || "").toLowerCase();
+                    if (val === searchVal) return true;
+                    const digits = val.replace(/\D/g, '');
+                    if (searchReplaced && digits === searchReplaced) return true;
+                }
+                return false;
+            };
+
+            try {
+                // 1. Check normal leads
+                const normalRes = await fetch(`/api/leads/overview?search=${encodeURIComponent(searchVal)}&type=normal&pageSize=20`);
+                if (normalRes.ok) {
+                    const normalData = await normalRes.json();
+                    const leadFound = (normalData.leads || []).find((l: any) => exactMatch(l, ['id', 'phone']));
+                    if (leadFound) {
+                        setFoundType("lead");
+                        setLoading(false);
+                        return;
+                    }
+                }
+
+                // 2. Check owner leads
+                const ownersRes = await fetch(`/api/owner-leads?pageSize=100`);
+                if (ownersRes.ok) {
+                    const ownersData = await ownersRes.json();
+                    const ownerData = ownersData.owner_data || [];
+                    const ownerFound = ownerData.find((o: any) => exactMatch(o, ['id', 'contactNo', 'Phone', 'phone']));
+                    if (ownerFound) {
+                        setFoundOwner(ownerFound);
+                        setFoundType("owner");
+                        setLoading(false);
+                        return;
+                    }
+                }
+
+                setFoundType("none");
+            } catch (err) {
+                console.error("Failed to find lead", err);
+                setFoundType("none");
+            } finally {
+                setLoading(false);
             }
-            return false;
-        });
-
-        if (leadFound) {
-            setFoundType("lead");
-            return;
         }
 
-        // 2. Check owners
-        const ownerFound = ownerLeads.find(o => {
-            const oId = String(o.id || "").toLowerCase();
-            if (oId === searchVal) return true;
+        findLead();
+    }, [decodedCustomerId]);
 
-            const contact = String(o.contactNo || "").replace(/\D/g, '');
-            const phone = String(o.Phone || "").replace(/\D/g, '');
-            const phone2 = String(o.phone || "").replace(/\D/g, '');
-
-            if (searchReplaced && (contact === searchReplaced || phone === searchReplaced || phone2 === searchReplaced)) return true;
-            return false;
-        });
-
-        if (ownerFound) {
-            setFoundOwner(ownerFound);
-            setFoundType("owner");
-        } else {
-            setFoundType("none");
-        }
-    }, [decodedCustomerId, leads, ownerLeads, loadingLeads, loadingOwners]);
-
-    if (loadingLeads || loadingOwners || foundType === "searching") {
+    if (loading || foundType === "searching") {
         return <ASLoader />;
     }
 

@@ -21,7 +21,7 @@ import {
     Building2,
     Users
 } from "lucide-react";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { subDays, startOfDay, endOfDay } from "date-fns";
 import {
     DropdownMenu,
@@ -37,55 +37,14 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { consolidateLeads, ConsolidatedLead } from "@/lib/leads-utils";
+import { ConsolidatedLead } from "@/lib/leads-utils";
 import { WhatsAppChatDetail } from "@/components/dashboard/whatsapp-chat-detail";
 import { ASLoader } from "@/components/as-loader";
-import { useData } from "@/context/DataContext";
-
-const parseMsg = (raw: any): { date: Date | null, content: string } => {
-    if (!raw || !String(raw).trim()) return { date: null, content: "" };
-    const content = String(raw).trim();
-
-    // 1. Direct ISO
-    if (content.length >= 10 && !isNaN(new Date(content).getTime())) {
-        if (content.includes('T') || (content.includes('-') && content.includes(':'))) {
-            return { date: new Date(content), content: "" };
-        }
-    }
-
-    // 2. ISO at the end (with any number of newlines/spaces)
-    const isoRegex = /[\n\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*)$/;
-    const isoMatch = content.match(isoRegex);
-    if (isoMatch) {
-        const d = new Date(isoMatch[1]);
-        if (!isNaN(d.getTime())) {
-            return {
-                date: d,
-                content: content.replace(isoRegex, '').trim()
-            };
-        }
-    }
-
-    // 3. Space-separated date at the end
-    const lines = content.split('\n');
-    const lastLine = lines[lines.length - 1].trim();
-    if (lastLine.includes('-') && lastLine.includes(':')) {
-        const lastLineDate = new Date(lastLine.replace(' ', 'T'));
-        if (!isNaN(lastLineDate.getTime())) {
-            return {
-                date: lastLineDate,
-                content: lines.length > 1 ? lines.slice(0, -1).join('\n').trim() : content
-            };
-        }
-    }
-
-    return { date: null, content: content };
-};
 
 export default function WhatsappLeadsPage() {
-    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
     const [leads, setLeads] = useState<ConsolidatedLead[]>([]);
-    const loading = loadingLeads;
+    const [total, setTotal] = useState(0);
+    const [loading, setLoading] = useState(true);
     const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedLeadIdForChat, setSelectedLeadIdForChat] = useState<string | null>(null);
@@ -109,101 +68,84 @@ export default function WhatsappLeadsPage() {
         loops: []
     });
 
-    useEffect(() => {
-        if (!loadingLeads) {
-            const whatsappLeads = allLeads.filter(l => {
-                const lead = l as any;
-                const wp1 = lead["W.P_1"];
-                return (wp1 && wp1 !== "" && wp1 !== "No");
-            });
-            setLeads(whatsappLeads);
+    const replyStatusToApi = (statuses: string[]): string => {
+        if (statuses.includes("Replied") && statuses.includes("Sent")) return 'all';
+        if (statuses.includes("Replied")) return 'replied';
+        if (statuses.includes("Sent")) return 'sent';
+        return 'all';
+    };
+
+    const loopsToApi = (loops: string[]): string => {
+        if (loops.length !== 1) return 'all';
+        if (loops.includes("Intro")) return 'intro';
+        if (loops.includes("followup")) return 'follow_up';
+        if (loops.includes("nurture")) return 'nurture';
+        return 'all';
+    };
+
+    const loadLeads = async () => {
+        setLoading(true);
+        const q = new URLSearchParams();
+        if (dateRange?.from) {
+            q.set('from', startOfDay(dateRange.from).toISOString());
+            q.set('to', endOfDay(dateRange.to || dateRange.from).toISOString());
         }
-    }, [allLeads, loadingLeads]);
-
-    useEffect(() => {
-        if (activeTab === "owners") {
-            setLoadingOwners(true);
-            const q = new URLSearchParams({
-                from: startOfDay(dateRange.from).toISOString(),
-                to: endOfDay(dateRange.to).toISOString()
-            });
-            fetch(`/api/owner-leads?${q}`)
-                .then(res => res.json())
-                .then(data => setOwnerLeads(data.owner_data || []))
-                .catch(err => console.error("Owner fetch error:", err))
-                .finally(() => setLoadingOwners(false));
+        if (searchQuery) q.set('search', searchQuery);
+        q.set('replyStatus', replyStatusToApi(activeFilters.replyStatus));
+        q.set('loop', loopsToApi(activeFilters.loops));
+        q.set('page', String(currentPage));
+        q.set('pageSize', String(leadsPerPage));
+        try {
+            const res = await fetch(`/api/whatsapp/leads?${q}`);
+            const data = await res.json();
+            setLeads(data.leads || []);
+            setTotal(data.total || 0);
+        } catch (e) {
+            console.error("Leads fetch error:", e);
+            setLeads([]);
+            setTotal(0);
+        } finally {
+            setLoading(false);
         }
-    }, [activeTab, dateRange?.from, dateRange?.to]);
+    };
 
-    const filteredLeads = useMemo(() => {
-        setCurrentPage(1); // Reset to first page on filter change
-        return leads.filter(l => {
-            // Search filter
-            const matchesSearch = l.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                l.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                l.phone.includes(searchQuery);
-
-            if (!matchesSearch) return false;
-
-            // Date range filter using W.P_1 TS specifically
-            const parseWPStamp = (tsRaw: any): Date | null => {
-                if (!tsRaw || !tsRaw.includes(' - ')) return null;
-                const parts = tsRaw.split(' - ');
-                const datePart = parts[parts.length - 1].trim(); 
-                const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-                if (!match) return null;
-                // DD/MM/YYYY
-                const d = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-                return isNaN(d.getTime()) ? null : d;
-            };
-
-            if (dateRange.from) {
-                const wp1 = (l as any)["W.P_1"];
-                const wp1Ts = (l as any)["W.P_1 TS"];
-                
-                // Priority: parse date from content, fallback to W.P_1 TS
-                let reachoutDate = parseMsg(wp1).date;
-                if (!reachoutDate && wp1Ts && wp1Ts.includes(' - ')) {
-                    const parts = wp1Ts.split(' - ');
-                    const datePart = parts[parts.length - 1].trim();
-                    const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-                    if (match) {
-                        reachoutDate = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-                    }
-                }
-                
-                if (!reachoutDate) return false; 
-
-                const fromDate = startOfDay(new Date(dateRange.from));
-                const toDate = dateRange.to ? endOfDay(new Date(dateRange.to)) : endOfDay(new Date(fromDate));
-
-                if (reachoutDate < fromDate || reachoutDate > toDate) return false;
-            }
-
-            // Reply status filter
-            const wtR = (l as any).WP_Replied_track;
-            let hasReplied = false;
-            if (wtR && wtR !== "" && String(wtR).toLowerCase() !== "no") {
-                const parsed = parseMsg(wtR);
-                if (parsed.date || String(wtR).toLowerCase() === "yes" || String(wtR).toLowerCase() === "replied") {
-                    hasReplied = true;
-                }
-            }
-            
-            if (activeFilters.replyStatus.length > 0) {
-                const matchesReply = (activeFilters.replyStatus.includes("Replied") && hasReplied) ||
-                    (activeFilters.replyStatus.includes("Sent") && !hasReplied);
-                if (!matchesReply) return false;
-            }
-
-            // Loop filter
-            if (activeFilters.loops.length > 0) {
-                if (!activeFilters.loops.includes(l.source_loop)) return false;
-            }
-
-            return true;
+    const loadOwners = async () => {
+        setLoadingOwners(true);
+        const q = new URLSearchParams({
+            from: startOfDay(dateRange.from).toISOString(),
+            to: endOfDay(dateRange.to).toISOString()
         });
-    }, [leads, searchQuery, dateRange, activeFilters]);
+        try {
+            const res = await fetch(`/api/owner-leads?${q}`);
+            const data = await res.json();
+            setOwnerLeads(data.owner_data || []);
+        } catch (err) {
+            console.error("Owner fetch error:", err);
+        } finally {
+            setLoadingOwners(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === "leads") {
+            loadLeads();
+        } else {
+            loadOwners();
+        }
+    }, [
+        activeTab,
+        dateRange?.from,
+        dateRange?.to,
+        searchQuery,
+        activeFilters.replyStatus.join(','),
+        activeFilters.loops.join(','),
+        currentPage
+    ]);
+
+    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchQuery(e.target.value);
+        setCurrentPage(1);
+    };
 
     const toggleFilter = (type: 'replyStatus' | 'loops', value: string) => {
         setActiveFilters(prev => {
@@ -214,19 +156,21 @@ export default function WhatsappLeadsPage() {
                 return { ...prev, [type]: [...current, value] };
             }
         });
+        setCurrentPage(1);
     };
 
     const resetFilters = () => {
         setActiveFilters({ replyStatus: [], loops: [] });
         setDateRange({ from: undefined, to: undefined });
         setSearchQuery("");
+        setCurrentPage(1);
     };
 
     const toggleSelectAll = () => {
-        if (selectedLeads.length === filteredLeads.length) {
+        if (selectedLeads.length === leads.length) {
             setSelectedLeads([]);
         } else {
-            setSelectedLeads(filteredLeads.map(l => l.id));
+            setSelectedLeads(leads.map(l => l.id));
         }
     };
 
@@ -238,47 +182,39 @@ export default function WhatsappLeadsPage() {
         }
     };
 
-    const filteredOwners = useMemo(() => {
-        return ownerLeads.filter(o => {
-            const name = (o.Name || o.name || "").toLowerCase();
-            const email = (o.Email || o.email || "").toLowerCase();
-            const phone = (o.contactNo || o.Phone || o.phone || "");
-            const matchesSearch = name.includes(searchQuery.toLowerCase()) || 
-                                email.includes(searchQuery.toLowerCase()) ||
-                                phone.includes(searchQuery);
-            if (!matchesSearch) return false;
+    const filteredOwners = ownerLeads.filter(o => {
+        const name = (o.Name || o.name || "").toLowerCase();
+        const email = (o.Email || o.email || "").toLowerCase();
+        const phone = (o.contactNo || o.Phone || o.phone || "");
+        const matchesSearch = name.includes(searchQuery.toLowerCase()) ||
+            email.includes(searchQuery.toLowerCase()) ||
+            phone.includes(searchQuery);
+        if (!matchesSearch) return false;
 
-            const wtR = o["WTS_Reply_Track"];
-            let hasReplied = false;
-            if (wtR && wtR !== "" && String(wtR).toLowerCase() !== "no") {
-                hasReplied = true;
-            }
-            if (activeFilters.replyStatus.length > 0) {
-                const matchesReply = (activeFilters.replyStatus.includes("Replied") && hasReplied) ||
-                    (activeFilters.replyStatus.includes("Sent") && !hasReplied);
-                if (!matchesReply) return false;
-            }
+        const wtR = o["WTS_Reply_Track"];
+        let hasReplied = false;
+        if (wtR && wtR !== "" && String(wtR).toLowerCase() !== "no") {
+            hasReplied = true;
+        }
+        if (activeFilters.replyStatus.length > 0) {
+            const matchesReply = (activeFilters.replyStatus.includes("Replied") && hasReplied) ||
+                (activeFilters.replyStatus.includes("Sent") && !hasReplied);
+            if (!matchesReply) return false;
+        }
 
-            return true;
-        });
-    }, [ownerLeads, searchQuery, activeFilters]);
+        return true;
+    });
 
-    // Pagination Logic
-    const totalPages = activeTab === "leads" 
-        ? Math.ceil(filteredLeads.length / leadsPerPage) 
+    const totalPages = activeTab === "leads"
+        ? Math.ceil(total / leadsPerPage)
         : Math.ceil(filteredOwners.length / leadsPerPage);
-
-    const paginatedLeads = filteredLeads.slice(
-        (currentPage - 1) * leadsPerPage,
-        currentPage * leadsPerPage
-    );
 
     const paginatedOwners = filteredOwners.slice(
         (currentPage - 1) * leadsPerPage,
         currentPage * leadsPerPage
     );
 
-    if (loading) {
+    if (loading && activeTab === "leads") {
         return <ASLoader />;
     }
 
@@ -319,9 +255,7 @@ export default function WhatsappLeadsPage() {
                     )}
                     <DateRangePicker onUpdate={({ range }) => {
                         setDateRange({ from: range?.from, to: range?.to });
-                        if (range?.from) {
-                            refreshLeads({ from: range.from, to: range.to, type: 'whatsapp' });
-                        }
+                        setCurrentPage(1);
                     }} />
                 </div>
             </div>
@@ -334,7 +268,7 @@ export default function WhatsappLeadsPage() {
                         className="pl-10 h-10 bg-slate-50/50 border-slate-200"
                         placeholder={`Search ${activeTab}...`}
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={handleSearchChange}
                     />
                 </div>
                 <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
@@ -402,7 +336,7 @@ export default function WhatsappLeadsPage() {
                                 <tr className="bg-slate-50 text-slate-500 text-xs font-bold uppercase border-b border-slate-200">
                                     <th className="px-4 py-4 w-[40px]">
                                         <Checkbox
-                                            checked={selectedLeads.length === filteredLeads.length && filteredLeads.length > 0}
+                                            checked={selectedLeads.length === leads.length && leads.length > 0}
                                             onCheckedChange={toggleSelectAll}
                                         />
                                     </th>
@@ -423,14 +357,14 @@ export default function WhatsappLeadsPage() {
                                                 Syncing with Supabase...
                                             </td>
                                         </tr>
-                                    ) : filteredLeads.length === 0 ? (
+                                    ) : leads.length === 0 ? (
                                         <tr>
                                             <td colSpan={7} className="px-4 py-20 text-center text-slate-400">
                                                 No leads with contact history found.
                                             </td>
                                         </tr>
                                     ) : (
-                                        paginatedLeads.map((lead, index) => (
+                                        leads.map((lead, index) => (
                                             <tr
                                                 key={`${lead.id}-${index}`}
                                                 className="hover:bg-slate-50 transition-colors group cursor-pointer"
@@ -516,10 +450,6 @@ export default function WhatsappLeadsPage() {
                                         })
                                     )
                                 )}
-
-
-
-
                             </tbody>
                         </table>
                     </div>
@@ -527,9 +457,9 @@ export default function WhatsappLeadsPage() {
                     <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex flex-col md:flex-row items-center justify-between gap-4">
                         <p className="text-sm text-slate-500">
                             Showing <span className="font-bold text-slate-900">
-                                {activeTab === "leads" ? paginatedLeads.length : paginatedOwners.length}
+                                {activeTab === "leads" ? leads.length : paginatedOwners.length}
                             </span> of <span className="font-bold text-slate-900">
-                                {activeTab === "leads" ? filteredLeads.length : filteredOwners.length}
+                                {activeTab === "leads" ? total : filteredOwners.length}
                             </span> contacted {activeTab}
                         </p>
 
@@ -601,13 +531,7 @@ export default function WhatsappLeadsPage() {
 function StatusBadge({ lead: leadRaw }: { lead: any }) {
     const lead = leadRaw as any;
     const wtR = lead.WP_Replied_track;
-    let hasReplied = false;
-    if (wtR && wtR !== "" && String(wtR).toLowerCase() !== "no") {
-        const parsed = parseMsg(wtR);
-        if (parsed.date || String(wtR).toLowerCase() === "yes" || String(wtR).toLowerCase() === "replied") {
-            hasReplied = true;
-        }
-    }
+    const hasReplied = !!(wtR && wtR !== "" && String(wtR).toLowerCase() !== "no");
 
     const classes = !hasReplied ? "bg-slate-100 text-slate-600" : "bg-emerald-100 text-emerald-700";
     const label = !hasReplied ? "SENT" : "REPLIED";
@@ -618,4 +542,3 @@ function StatusBadge({ lead: leadRaw }: { lead: any }) {
         </span>
     );
 }
-

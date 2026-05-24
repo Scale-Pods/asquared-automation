@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight, Search, Mail, MessageCircle, Phone } from "lucide-react";
 
-interface ReplyData {
+export interface ReplyData {
     id: string;
     contactName: string;
     contactInfo: string;
@@ -31,11 +31,10 @@ interface ReplyData {
     time: string;
     status: 'Replied' | 'Pending' | 'Follow-up';
     preview: string;
+    link: string;
 }
 
-
-
-export function TotalRepliesView({ leads = [] }: { leads?: any[] }) {
+export function TotalRepliesView({ leads = [], replyData }: { leads?: any[]; replyData?: ReplyData[] }) {
     const [search, setSearch] = useState("");
     const [modeFilter, setModeFilter] = useState("all");
     const [currentPage, setCurrentPage] = useState(1);
@@ -67,7 +66,9 @@ export function TotalRepliesView({ leads = [] }: { leads?: any[] }) {
     // Map real leads to ReplyData format
     const realData: (ReplyData & { link: string; sortDate: Date })[] = [];
 
-    leads.forEach((lead: any, idx: number) => {
+    if (replyData) {
+        realData.push(...replyData.map(r => ({ ...r, sortDate: new Date(r.date) })));
+    } else leads.forEach((lead: any, idx: number) => {
         // --- WhatsApp Logic ---
         let wpReplyObj = { content: "Lead replied via WhatsApp", date: new Date(lead.updated_at || lead.created_at || 0) };
         let hasWP = false;

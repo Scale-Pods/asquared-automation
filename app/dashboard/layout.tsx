@@ -13,38 +13,11 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DataProvider, useData } from "@/context/DataContext";
+import { DataProvider } from "@/context/DataContext";
 import { DIDBalanceDetail } from "@/components/dashboard/did-balance-detail";
-import { calculateDuration } from "@/lib/utils";
-import { useMemo } from "react";
 import { logout } from "@/app/actions/auth";
 
-const sidebarItems = [
-    {
-        title: "Dashboard",
-        href: "/dashboard",
-        icon: LayoutDashboard,
-    },
-    {
-        title: "Email Marketing",
-        href: "/dashboard/email",
-        icon: Mail,
-    },
-    {
-        title: "WhatsApp",
-        href: "/dashboard/whatsapp",
-        icon: MessageCircle,
-    },
-    {
-        title: "Voice Agent",
-        href: "/dashboard/voice",
-        icon: Mic,
-    },
-];
-
-function WalletModal({ isOpen, onClose, type, details, calls }: { isOpen: boolean, onClose: () => void, type: 'vapi' | 'elevenlabs' | 'did', details?: any, calls?: any[] }) {
-    const { voiceBalance, didBalance } = useData();
-
+function WalletModal({ isOpen, onClose, type, voiceBalance, didBalance }: { isOpen: boolean, onClose: () => void, type: 'vapi' | 'elevenlabs' | 'did', voiceBalance?: any, didBalance?: any }) {
     const title = (() => {
         switch (type) {
             case 'vapi': return 'Vapi Wallet';
@@ -63,24 +36,7 @@ function WalletModal({ isOpen, onClose, type, details, calls }: { isOpen: boolea
         }
     })();
 
-    const vapiAgentUsed = useMemo(() => {
-        if (!calls || !Array.isArray(calls)) return 0;
-        // Strictly sum 'agent' costs from the logs displayed in the current range
-        return calls.filter((c: any) => c.source === 'vapi').reduce((acc: number, call: any) => acc + (call.breakdown?.agent || 0), 0);
-    }, [calls]);
-
-    const didUsedCost = useMemo(() => {
-        if (!calls || !Array.isArray(calls)) return 0;
-        return calls.filter((c: any) => {
-            const isDID = c.source === 'did' || c.source === 'didlogic' || c.source === 'maqsam' || c.source === 'twilio';
-            const phoneStr = String(c.phone || c.customer_number || "");
-            const isUAE = phoneStr.startsWith('+971') || phoneStr.startsWith('971');
-            return isDID || isUAE;
-        }).reduce((acc: number, call: any) => {
-            return acc + (call.breakdown?.telephony || call.costValue || 0);
-        }, 0);
-    }, [calls]);
-
+    const vapiAgentUsed = voiceBalance?.vapi?.used || 0;
     const vapiDetails = voiceBalance?.vapi;
     const elDetails = voiceBalance?.elevenlabs || (voiceBalance?.character_limit ? voiceBalance : null);
 
@@ -184,7 +140,6 @@ function DashboardContent({
         }
     };
 
-    // Determine current context
     let currentContext = "master";
     if (pathname.startsWith("/dashboard/email")) currentContext = "email";
     else if (pathname.startsWith("/dashboard/whatsapp")) currentContext = "whatsapp";
@@ -192,39 +147,35 @@ function DashboardContent({
 
     const activeConfig = (dashboardConfig as any)[currentContext];
 
-    const {
-        calls,
-        voiceBalance,
-        didBalance,
-        loadingBalances,
-        loadingCalls
-    } = useData();
-    const vapiAgentUsed = useMemo(() => {
-        // Prioritize Vapi API's native 'used' value if available
-        if (voiceBalance?.vapi?.used !== undefined && voiceBalance?.vapi?.used !== 0) {
-            return voiceBalance.vapi.used;
-        }
-        if (!calls || !Array.isArray(calls)) return 0;
-        // Fallback to summing 'agent' costs from logs specifically
-        return calls.filter((c: any) => c.source === 'vapi').reduce((acc: number, call: any) => acc + (call.breakdown?.agent || 0), 0);
-    }, [calls, voiceBalance]);
-
-    const didUsedCost = useMemo(() => {
-        if (!calls || !Array.isArray(calls)) return 0;
-        return calls.filter((c: any) => {
-            const isDID = c.source === 'did' || c.source === 'didlogic' || c.source === 'maqsam' || c.source === 'twilio';
-            const phoneStr = String(c.phone || c.customer_number || "");
-            const isUAE = phoneStr.startsWith('+971') || phoneStr.startsWith('971');
-            return isDID || isUAE;
-        }).reduce((acc: number, call: any) => {
-            return acc + (call.breakdown?.telephony || call.costValue || 0);
-        }, 0);
-    }, [calls]);
+    const [voiceBalance, setVoiceBalance] = useState<any>(null);
+    const [didBalance, setDidBalance] = useState<any>(null);
+    const [loadingBalances, setLoadingBalances] = useState(true);
 
     const [walletModal, setWalletModal] = useState<{ isOpen: boolean, type: 'vapi' | 'elevenlabs' | 'did' }>({
         isOpen: false,
         type: 'vapi'
     });
+
+    useEffect(() => {
+        async function fetchBalances() {
+            setLoadingBalances(true);
+            try {
+                const [vapiRes, didRes] = await Promise.all([
+                    fetch('/api/vapi/balance'),
+                    fetch('/api/did/balance')
+                ]);
+                if (vapiRes.ok) setVoiceBalance(await vapiRes.json());
+                if (didRes.ok) setDidBalance(await didRes.json());
+            } catch (err) {
+                console.error("Failed to fetch balances", err);
+            } finally {
+                setLoadingBalances(false);
+            }
+        }
+        fetchBalances();
+    }, []);
+
+    const vapiAgentUsed = voiceBalance?.vapi?.used || 0;
 
 
     const content = (() => {
@@ -329,7 +280,6 @@ function DashboardContent({
 
                             {currentContext === "master" && (
                                 <div className="flex items-center gap-2">
-                                    {/* Vapi Balance Button */}
                                     <Button
                                         variant="outline"
                                         className="h-10 px-3 border-blue-200 bg-blue-50/30 hover:bg-blue-50 text-blue-700 gap-2 flex items-center shadow-sm"
@@ -339,13 +289,10 @@ function DashboardContent({
                                         <div className="flex flex-col items-start leading-[1.1]">
                                             <span className="text-[9px] font-bold uppercase opacity-70">Vapi Used</span>
                                             <span className="text-xs font-bold">
-                                                {loadingCalls ? "..." : `$${vapiAgentUsed.toFixed(2)}`}
+                                                {loadingBalances ? "..." : `$${vapiAgentUsed.toFixed(2)}`}
                                             </span>
                                         </div>
                                     </Button>
-
-                                    
-                                    {/* Telephony Button */}
                                     <Button
                                         variant="outline"
                                         className="h-10 px-3 border-blue-200 bg-blue-50/30 hover:bg-blue-50 text-blue-700 gap-2 flex items-center shadow-sm"
@@ -353,9 +300,9 @@ function DashboardContent({
                                     >
                                         <Wallet className="h-3.5 w-3.5" />
                                         <div className="flex flex-col items-start leading-[1.1]">
-                                            <span className="text-[9px] font-bold uppercase opacity-70">Telephony Used</span>
+                                            <span className="text-[9px] font-bold uppercase opacity-70">Telephony Balance</span>
                                             <span className="text-xs font-bold">
-                                                {loadingCalls ? "..." : `$${didUsedCost.toFixed(2)}`}
+                                                {loadingBalances ? "..." : `$${(didBalance?.balance || 0).toFixed(2)}`}
                                             </span>
                                         </div>
                                     </Button>
@@ -367,15 +314,8 @@ function DashboardContent({
                     <WalletModal
                         isOpen={walletModal.isOpen}
                         type={walletModal.type}
-                        details={(() => {
-                            switch (walletModal.type) {
-                                case 'vapi': return voiceBalance?.vapi;
-                                case 'elevenlabs': return voiceBalance?.elevenlabs || (voiceBalance?.character_limit ? voiceBalance : null);
-                                case 'did': return didBalance;
-                                default: return null;
-                            }
-                        })()}
-                        calls={calls}
+                        voiceBalance={voiceBalance}
+                        didBalance={didBalance}
                         onClose={() => setWalletModal({ ...walletModal, isOpen: false })}
                     />
 

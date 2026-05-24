@@ -1,7 +1,7 @@
 "use client";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Phone, Clock, DollarSign, TrendingUp, Timer, Users, Crown } from "lucide-react";
+import { Phone, Clock, TrendingUp, Timer, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ASLoader } from "@/components/as-loader";
 import React, { useEffect, useState } from "react";
@@ -18,153 +18,56 @@ import {
     Area
 } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { format, getHours, subDays } from "date-fns";
-import { calculateDuration, formatDuration } from "@/lib/utils";
-import { useData } from "@/context/DataContext";
+import { formatDuration } from "@/lib/utils";
+import { subDays } from "date-fns";
+import { fetchCached } from "@/lib/use-cached-fetch";
 
 export default function VoiceDashboardPage() {
-    // providerFilter: 'vapi' | 'elevenlabs'
     const [providerFilter, setProviderFilter] = useState("vapi");
-    const [stats, setStats] = useState({
+    const [stats, setStats] = useState<any>({
         totalCalls: 0,
         totalDuration: 0,
         avgDuration: 0,
-        totalCost: 0,
-        avgCost: 0,
-        successRate: 0,
-        completedCalls: 0,
-        vapiBalance: 0,
-        lifetimeCostVapi: 0,
         normalCalls: 0,
         ownersCalls: 0,
     });
     const [dailyVolume, setDailyVolume] = useState<any[]>([]);
     const [hourlyDistribution, setHourlyDistribution] = useState<any[]>([]);
-    const [loadingLocal, setLoadingLocal] = useState(false);
-    const [dateRange, setDateRange] = useState<any>(undefined);
+    const [loading, setLoading] = useState(false);
+    const [dateRange, setDateRange] = useState<any>({
+        from: subDays(new Date(), 7),
+        to: new Date()
+    });
 
-
-    const { calls: globalCalls, loadingCalls, voiceBalance, refreshCalls } = useData();
-
-    // Refresh on filter/date change
-    useEffect(() => {
-        if (!refreshCalls) return;
-        refreshCalls({
-            from: dateRange?.from,
-            to: dateRange?.to,
-            provider: 'vapi'
-        });
-    }, [dateRange, providerFilter, refreshCalls]);
-
-    useEffect(() => {
-        if (voiceBalance) {
-            setStats(prev => ({
-                ...prev,
-                vapiBalance: voiceBalance.vapi?.balance || 0
-            }));
+    const fetchOverview = async (range: any) => {
+        setLoading(true);
+        try {
+            const from = range?.from || subDays(new Date(), 30);
+            const to = range?.to || new Date();
+            const data = await fetchCached(`/api/voice/overview?from=${from.toISOString()}&to=${to.toISOString()}`);
+            setStats({
+                totalCalls: data.totalCalls || 0,
+                totalDuration: data.totalDuration || 0,
+                avgDuration: data.avgDuration || 0,
+                normalCalls: data.normalCalls || 0,
+                ownersCalls: data.ownersCalls || 0,
+            });
+            setDailyVolume((data.volumeData || []).map((d: any) => ({ name: d.name, calls: d.value })));
+            setHourlyDistribution(
+                (data.hourlyData || [])
+                    .filter((_: any, i: number) => i % 3 === 0)
+                    .map((d: any) => ({ name: `${String(d.hour).padStart(2, '0')}:00`, calls: d.count }))
+            );
+        } catch (err) {
+            console.error("Failed to fetch voice overview", err);
+        } finally {
+            setLoading(false);
         }
-    }, [voiceBalance]);
-
-    const loading = loadingCalls;
+    };
 
     useEffect(() => {
-        // Calculate stats whenever globalCalls changes, even if still technically "loading"
-        // so that pre-fetched data from Master Dashboard shows up instantly.
-        if (globalCalls.length === 0 && loading) return;
-
-        let totalDuration = 0;
-        let totalCost = 0;
-        let completed = 0;
-        let successCount = 0;
-
-        const dayMap = new Map();
-        const hourMap = new Array(24).fill(0);
-
-        // Apply provider filter
-        const filteredCalls = globalCalls.filter((call: any) => {
-            if (providerFilter === 'vapi') return call.source === 'vapi';
-            return true;
-        });
-
-        let lifetimeCostVapiSum = 0;
-        let lifetimeCostELSum = 0;
-        let normalCallsCount = 0;
-        let ownersCallsCount = 0;
-
-        // Combined loop for efficiency
-        filteredCalls.forEach((call: any) => {
-            const status = (call.status || "").toLowerCase();
-            const vStatus = (call.vapiStatus || "").toLowerCase();
-            const startedAtDate = call.startedAt ? new Date(call.startedAt) : null;
-            const duration = call.durationSeconds || 0;
-
-            let cost = 0;
-            if (typeof call.cost === 'string') cost = parseFloat(call.cost.replace(/[^\d.]/g, '')) || 0;
-            else if (typeof call.cost === 'number') cost = call.cost;
-
-            // Lifetime Cost Tracking (provider specific within filtered set)
-            if (call.source === 'vapi') {
-                lifetimeCostVapiSum += (call.breakdown?.agent !== undefined) ? call.breakdown.agent : cost;
-                if (call.vapiAccount === 'owners') ownersCallsCount++;
-                else normalCallsCount++;
-            }
-
-            // Completion Logic (Consistent with Analytics Page)
-            const isCompleted = 
-                vStatus.includes("assistant-ended-call") || vStatus.includes("customer-ended-call");
-
-            if (isCompleted || status === 'answered') {
-                successCount++;
-                if (isCompleted) completed++;
-            }
-
-            totalDuration += duration;
-            totalCost += cost;
-
-            if (startedAtDate) {
-                const dayKey = format(startedAtDate, 'yyyy-MM-dd');
-                const displayKey = format(startedAtDate, 'MMM dd');
-                if (!dayMap.has(dayKey)) dayMap.set(dayKey, { count: 0, display: displayKey });
-                dayMap.get(dayKey).count++;
-
-                const hour = getHours(startedAtDate);
-                hourMap[hour]++;
-            }
-        });
-
-        const totalCalls = filteredCalls.length;
-        const avgDuration = totalCalls > 0 ? totalDuration / totalCalls : 0;
-        const avgCost = totalCalls > 0 ? totalCost / totalCalls : 0;
-        const successRate = totalCalls > 0 ? (successCount / totalCalls) * 100 : 0;
-
-        setStats(prev => ({
-            ...prev,
-            totalCalls,
-            totalDuration,
-            avgDuration,
-            totalCost,
-            avgCost,
-            successRate,
-            completedCalls: completed,
-            lifetimeCostVapi: (voiceBalance?.vapi?.used !== undefined && voiceBalance?.vapi?.used !== 0) ? voiceBalance.vapi.used : lifetimeCostVapiSum,
-            normalCalls: normalCallsCount,
-            ownersCalls: ownersCallsCount,
-        }));
-
-        const dailyData = Array.from(dayMap.entries())
-            .map(([dayKey, data]) => ({ dayKey, name: data.display, calls: data.count }))
-            .sort((a, b) => a.dayKey.localeCompare(b.dayKey));
-
-        setDailyVolume(dailyData);
-
-        const hourlyData = hourMap.map((calls, hour) => ({
-            name: `${hour.toString().padStart(2, '0')}:00`,
-            calls
-        })).filter((_, i) => i % 3 === 0);
-
-        setHourlyDistribution(hourlyData);
-    }, [globalCalls, dateRange, providerFilter, loading]);
+        fetchOverview(dateRange);
+    }, [dateRange]);
 
     return (
         <div className="flex flex-col gap-4 p-6 bg-slate-50/30 min-h-screen relative">
@@ -196,12 +99,7 @@ export default function VoiceDashboardPage() {
                     <Button
                         variant="outline"
                         className="flex items-center gap-2 border-slate-200 text-slate-600 hover:bg-slate-50 h-10"
-                        onClick={() => refreshCalls({
-                            from: dateRange?.from,
-                            to: dateRange?.to,
-                            provider: 'vapi',
-                            force: true
-                        })}
+                        onClick={() => fetchOverview(dateRange)}
                         disabled={loading}
                     >
                         <TrendingUp className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />

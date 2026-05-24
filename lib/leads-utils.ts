@@ -236,6 +236,7 @@ export function consolidateLeads(data: RawLeadsResponse): ConsolidatedLead[] {
                 stage_data: {},
                 created_at: getVal(l, ["Created At", "created_at"]) || new Date().toISOString(),
                 updated_at: getVal(l, ["Updated At", "updated_at"]),
+                last_contacted: getVal(l, ["Last Contacted", "last_contacted"]),
                 lead_status: getVal(l, ["lead_status", "Lead Status"]),
                 voice_call_status: getVal(l, ["voice_call_status"]),
                 note: getVal(l, ["note"])
@@ -243,12 +244,12 @@ export function consolidateLeads(data: RawLeadsResponse): ConsolidatedLead[] {
         });
     }
 
-    if (Array.isArray(data.leads) && data.leads.length > 0 && data.leads[0].bitrix_lead_id) {
+    if (Array.isArray(data.leads) && data.leads.length > 0) {
         data.leads.forEach((l: any, idx: number) => {
             consolidatedLeads.push({
                 id: `leads-${l.id || idx}`,
                 lead_id: l.bitrix_lead_id || "",
-                name: String(l.name || "Lead"),
+                name: String(l.name || l.customer_name || "Lead"),
                 phone: String(l.phone || ""),
                 email: String(l.email || "No Email"),
                 replied: l.response_received ? "Yes" : "No",

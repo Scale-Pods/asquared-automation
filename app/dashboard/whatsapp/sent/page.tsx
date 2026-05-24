@@ -8,13 +8,15 @@ import { DateRangePicker } from "@/components/ui/date-range-picker";
 import React, { useState, useEffect } from "react";
 import { consolidateLeads } from "@/lib/leads-utils";
 import { ASLoader } from "@/components/as-loader";
-import { useData } from "@/context/DataContext";
+import { startOfDay, endOfDay, subDays } from "date-fns";
 
 export default function WhatsappSentPage() {
-    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
-    const [dateRange, setDateRange] = useState<any>(undefined);
+    const [loading, setLoading] = useState(true);
+    const [dateRange, setDateRange] = useState<any>({
+        from: subDays(new Date(), 7),
+        to: new Date()
+    });
     const [messages, setMessages] = useState<any[]>([]);
-    const loading = loadingLeads;
     const [searchQuery, setSearchQuery] = useState("");
     const [stats, setStats] = useState({
         total: 0,
@@ -25,49 +27,42 @@ export default function WhatsappSentPage() {
 
     useEffect(() => {
         const fetchData = async () => {
-            if (loadingLeads) return;
+            setLoading(true);
             try {
-                // We still fetch templates as they're small and not in global context yet
-                const templatesRes = await fetch('/api/templates');
+                const q = new URLSearchParams({ type: 'whatsapp', whatsappOnly: 'true' });
+                if (dateRange?.from) {
+                    q.set('from', startOfDay(dateRange.from).toISOString());
+                    q.set('to', endOfDay(dateRange.to || dateRange.from).toISOString());
+                }
+
+                const [leadsRes, templatesRes] = await Promise.all([
+                    fetch(`/api/leads?${q}`),
+                    fetch('/api/templates')
+                ]);
+                const leadsData = await leadsRes.json();
                 const templates = templatesRes.ok ? await templatesRes.json() : [];
 
                 const waMessages: any[] = [];
                 let deliveredCount = 0;
                 let readCount = 0;
 
-                // Apply Date Filtering
-                const leads = allLeads.filter((lead: any) => {
-                    if (!dateRange?.from) return true;
-                    if (!lead.created_at) return false;
-
-                    const leadDate = new Date(lead.created_at);
-                    const from = new Date(dateRange.from);
-                    from.setHours(0, 0, 0, 0);
-                    const to = dateRange.to ? new Date(dateRange.to) : from;
-                    to.setHours(23, 59, 59, 999);
-
-                    return leadDate >= from && leadDate <= to;
-                });
-
-                leads.forEach((l: any) => {
-                    const lead = l as any;
-                    const stages = lead.stages_passed || [];
+                (leadsData.whatsappLeads || []).forEach((l: any) => {
+                    const stages = l.stages_passed || [];
                     stages.forEach((stage: string) => {
                         if (stage.toLowerCase().includes("whatsapp")) {
-                            // Find matching template if any
                             const template = templates.find((t: any) =>
                                 t.type === 'whatsapp' && (t.name === stage || stage.includes(t.name))
                             );
 
-                            const hasReplied = lead.whatsapp_replied && lead.whatsapp_replied !== "No" && lead.whatsapp_replied !== "none";
+                            const hasReplied = l.whatsapp_replied && l.whatsapp_replied !== "No" && l.whatsapp_replied !== "none";
 
                             waMessages.push({
-                                id: `${lead.id}-${stage}-${Math.random()}`,
-                                recipient: lead.phone || lead.name || "Unknown",
+                                id: `${l.id}-${stage}-${Math.random()}`,
+                                recipient: l.phone || l.name || "Unknown",
                                 message: template ? template.body : `WhatsApp Message: ${stage}`,
                                 status: hasReplied ? "Read" : "Delivered",
-                                time: lead.created_at ? new Date(lead.created_at).toLocaleTimeString() : "Unknown",
-                                rawDate: lead.created_at
+                                time: l.created_at ? new Date(l.created_at).toLocaleTimeString() : "Unknown",
+                                rawDate: l.created_at
                             });
 
                             if (hasReplied) readCount++;
@@ -85,17 +80,19 @@ export default function WhatsappSentPage() {
                 });
             } catch (e) {
                 console.error("WhatsApp sent processing error", e);
+            } finally {
+                setLoading(false);
             }
         };
         fetchData();
-    }, [dateRange, allLeads, loadingLeads]);
+    }, [dateRange?.from, dateRange?.to]);
 
     const filteredMessages = messages.filter(msg =>
         msg.recipient.toLowerCase().includes(searchQuery.toLowerCase()) ||
         msg.message.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    if (loading) {
+    if (loading && !dateRange?.from) {
         return <ASLoader />;
     }
 
@@ -108,9 +105,6 @@ export default function WhatsappSentPage() {
                 </div>
                 <DateRangePicker onUpdate={(val) => {
                     setDateRange(val.range);
-                    if (val.range?.from) {
-                        refreshLeads({ from: val.range.from, to: val.range.to, type: 'whatsapp' });
-                    }
                 }} />
             </div>
 
@@ -185,5 +179,3 @@ function StatCard({ title, value, icon, color, bg }: any) {
         </Card>
     );
 }
-
-

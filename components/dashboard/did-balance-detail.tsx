@@ -1,50 +1,11 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React from "react";
 import { Wallet, ExternalLink, CreditCard } from "lucide-react";
-import { calculateDuration } from "@/lib/utils";
-import { useData } from "@/context/DataContext";
 import { Button } from "@/components/ui/button";
 
 export function DIDBalanceDetail({ initialBalance }: { initialBalance?: any }) {
-    const { calls, loadingCalls } = useData();
-
-    const stats = useMemo(() => {
-        if (!calls || calls.length === 0) return { inbound: 0, outbound: 0, total: 0, cost: 0 };
-
-        const filtered = calls.filter((call: any) => {
-            // Updated logic to detect DID/Telephony calls
-            const isDID = call.source === 'did' || call.source === 'didlogic' || call.source === 'maqsam' || call.source === 'twilio';
-            const provisionedNum = String(call.phoneNumber || "");
-            
-            // Detection based on common prefixes or specific flags
-            const phoneStr = String(call.phone || call.customer_number || "");
-            const isUAE = phoneStr.startsWith('+971') || phoneStr.startsWith('971');
-
-            return isDID || isUAE;
-        });
-
-        let inbound = 0;
-        let outbound = 0;
-        let totalCost = 0;
-
-        filtered.forEach((call: any) => {
-            const duration = calculateDuration(call);
-            const isInbound = call.isInbound === true || (typeof call.type === 'string' && call.type.toLowerCase() === "inbound");
-
-            if (isInbound) {
-                inbound += duration;
-            } else {
-                outbound += duration;
-            }
-            // Use the specific telephony breakdown cost, fallback to costValue
-            totalCost += (call.breakdown?.telephony || call.costValue || 0);
-        });
-
-        const total = inbound + outbound;
-
-        return { inbound, outbound, total, cost: totalCost };
-    }, [calls]);
+    const balance = initialBalance?.balance ?? 0;
 
     return (
         <div className="space-y-6">
@@ -54,12 +15,12 @@ export function DIDBalanceDetail({ initialBalance }: { initialBalance?: any }) {
                         <Wallet className="h-6 w-6" />
                     </div>
                     <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2">
-                        Telephony Consumption (USD)
+                        Telephony Balance (USD)
                     </span>
                     <div className="flex items-baseline gap-1">
                         <span className="text-2xl font-bold text-blue-600">$</span>
                         <span className="text-6xl font-black tracking-tighter text-slate-900">
-                            {stats.cost.toFixed(2)}
+                            {balance.toFixed(2)}
                         </span>
                     </div>
 
@@ -74,10 +35,6 @@ export function DIDBalanceDetail({ initialBalance }: { initialBalance?: any }) {
                 Add Funds to Telephony
                 <ExternalLink className="h-3 w-3 opacity-50" />
             </Button>
-
-            {loadingCalls && (
-                <p className="text-center text-xs text-slate-400 animate-pulse">Syncing lifetime logs...</p>
-            )}
         </div>
     );
 }

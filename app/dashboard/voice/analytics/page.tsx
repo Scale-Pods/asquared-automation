@@ -24,19 +24,14 @@ import { format, subDays } from "date-fns";
 import { useData } from "@/context/DataContext";
 
 export default function VoiceAnalyticsPage() {
-    const { calls: globalCalls, loadingCalls, voiceBalance, leads: globalLeads, loadingLeads, refreshCalls, ownerLeads, allTimeVoiceCount, allTimeOwnerVoiceCount, waitingAvailabilityCount } = useData();
-    const [statusFilter, setStatusFilter] = useState("all");
-    // accountFilter: 'vapi' | 'vapi-owners' | 'vapi-normal' | 'elevenlabs'
+    const { voiceBalance, allTimeVoiceCount, allTimeOwnerVoiceCount } = useData();
     const [accountFilter, setAccountFilter] = useState("vapi");
-    const [calls, setCalls] = useState<any[]>([]);
     const [loadingLocal, setLoadingLocal] = useState(false);
-    const loading = loadingLocal || loadingCalls;
     const [dateRange, setDateRange] = useState<any>({
         from: subDays(new Date(), 7),
         to: new Date(),
     });
 
-    // Processed Data States
     const [volumeData, setVolumeData] = useState<any[]>([]);
     const [durationData, setDurationData] = useState<any[]>([]);
     const [costData, setCostData] = useState<any[]>([]);
@@ -51,210 +46,60 @@ export default function VoiceAnalyticsPage() {
         outboundDuration: 0,
         pickupRate: 0,
         completionRate: 0,
-        positiveRate: 0,
-        positiveCount: 0,
-        qualifiedCount: 0,
-        connectedCount: 0,
         normalCalls: 0,
         ownersCalls: 0,
         ownerPickupRate: 0,
         ownerCompletionRate: 0,
-        ownerPositiveRate: 0,
-        ownerPositiveCount: 0,
+        waitingAvailabilityCount: 0,
     });
 
     useEffect(() => {
         if (voiceBalance) {
-            setStats(prev => ({
-                ...prev,
-                vapiBalance: voiceBalance.vapi?.balance || 0
-            }));
+            setStats(prev => ({ ...prev, vapiBalance: voiceBalance.vapi?.balance || 0 }));
         }
     }, [voiceBalance]);
 
-    // Server-side refresh when filters/date change
     useEffect(() => {
         if (!dateRange?.from) return;
-        refreshCalls({
-            from: dateRange.from,
-            to: dateRange.to || dateRange.from,
-            provider: 'vapi'
-        });
-    }, [dateRange, accountFilter, refreshCalls]);
+        setLoadingLocal(true);
 
-    useEffect(() => {
-        // Show data instantly if it exists in the global cache from the master dashboard
-        if (globalCalls.length === 0 && loadingCalls) return;
-
-        // Apply account/provider filter
-        const filteredCalls = globalCalls.filter((call: any) => {
-            if (accountFilter === 'vapi') return call.source === 'vapi';
-            if (accountFilter === 'vapi-normal') return call.source === 'vapi' && call.vapiAccount === 'normal';
-            if (accountFilter === 'vapi-owners') return call.source === 'vapi' && call.vapiAccount === 'owners';
-            return true;
+        const q = new URLSearchParams({
+            from: new Date(dateRange.from).toISOString(),
+            to: new Date(dateRange.to || dateRange.from).toISOString(),
+            account: accountFilter === 'vapi' ? 'all' : accountFilter === 'vapi-normal' ? 'normal' : 'owners'
         });
 
-        setCalls(filteredCalls);
-        processAnalytics(filteredCalls);
-    }, [globalCalls, loadingCalls, globalLeads, loadingLeads, accountFilter]);
-
-    const parseLeadDate = (val: any): Date | null => {
-        if (!val || typeof val !== 'string' || val.toLowerCase() === 'no' || val.toLowerCase() === 'yes') return null;
-        try {
-            // Handle various formats: '2026-05-04 05:39...' or ISO strings
-            const sanitized = val.trim().replace(/\s+/, 'T');
-            const d = new Date(sanitized);
-            return isNaN(d.getTime()) ? null : d;
-        } catch (e) {
-            return null;
-        }
-    };
-
-    const processAnalytics = (data: any[]) => {
-        const totalCalls = data.length;
-        let totalDuration = 0;
-        let totalCredits = 0;
-        let successCount = 0;
-        let normalConnectedCount = 0;
-        let normalQualifiedCount = 0;
-        let ownerConnectedCount = 0;
-        let ownerQualifiedCount = 0;
-        let ownerPositiveCount = 0;
-
-        const dayMap = new Map();
-        const durationBuckets = { '0-30s': 0, '30s-1m': 0, '1m-2m': 0, '2m-5m': 0, '5m+': 0 };
-        const typesMap = new Map();
-
-        let inboundSum = 0;
-        let outboundSum = 0;
-        let connectedCount = 0;
-        let qualifiedCount = 0;
-        
-        let normalCallsInRange = 0;
-        let ownersCallsInRange = 0;
-
-        const from = dateRange?.from ? new Date(dateRange.from).setHours(0,0,0,0) : 0;
-        const to = dateRange?.to ? new Date(dateRange.to).setHours(23,59,59,999) : Date.now();
-
-        // Calculate Positive Counts from Owner Leads (as this data isn't in call logs)
-        ownerLeads.forEach((o: any) => {
-            const v1 = parseLeadDate(o.Voice_1);
-            const v2 = parseLeadDate(o.Voice_2);
-            const status = String(o["call Lead Status"] || "").toLowerCase();
-            const isPositive = status.includes("expression of interest") || status.includes("callback");
-
-            [v1, v2].forEach(d => {
-                if (d && d.getTime() >= from && d.getTime() <= to) {
-                    if (isPositive) ownerPositiveCount++;
-                }
-            });
-        });
-
-        // Lifetime calculations (all global calls)
-        let lifetimeVapiUsedSum = 0;
-        globalCalls.forEach(call => {
-            let cost = 0;
-            if (typeof call.cost === 'string') cost = parseFloat(call.cost.replace(/[^\d.]/g, '')) || 0;
-            else if (typeof call.cost === 'number') cost = call.cost;
-            if (call.source === 'vapi') lifetimeVapiUsedSum += (call.breakdown?.agent !== undefined) ? call.breakdown.agent : cost;
-        });
-
-        // Funnel and Chart calculation inside the main data loop to ensure numerators and denominators are synced
-        data.forEach(call => {
-            const dateStr = call.startedAt || null;
-            const time = dateStr ? format(new Date(dateStr), 'MMM dd') : 'N/A';
-            const dur = call.durationSeconds || 0;
-            const isOwner = call.vapiAccount === 'owners';
-            const isNormal = call.vapiAccount === 'normal' || !call.vapiAccount;
-
-            if (isOwner) ownersCallsInRange++;
-            else if (isNormal) normalCallsInRange++;
-
-            let cost = 0;
-            if (typeof call.cost === 'string') cost = parseFloat(call.cost.replace(/[^\d.]/g, '')) || 0;
-            else if (typeof call.cost === 'number') cost = call.cost;
-
-            if (call.status === 'done' || call.status === 'ended' || call.status === 'completed' || call.status === 'success' || call.status === 'answered') {
-                successCount++;
-            }
-
-            totalDuration += dur;
-            totalCredits += cost;
-
-            const raw = call.raw || call;
-            const directionProp = (raw.telephony?.direction || raw.direction || "").toLowerCase();
-            const isInbound = call.isInbound === true || directionProp.includes('inbound') || directionProp.includes('incoming');
-            const isWebCall = (typeof call.type === 'string' && call.type.toLowerCase() === 'web call') || (call.phone === 'Website/API');
-
-            if (isInbound) inboundSum += dur;
-            else outboundSum += dur;
-
-            const typeLabel = isInbound ? 'Inbound' : (isWebCall ? 'Web Call' : 'Outbound');
-            typesMap.set(typeLabel, (typesMap.get(typeLabel) || 0) + 1);
-
-            const dayObj = dayMap.get(time) || { calls: 0, credits: 0 };
-            dayMap.set(time, { calls: dayObj.calls + 1, credits: dayObj.credits + cost });
-
-            if (dur < 30) durationBuckets['0-30s']++;
-            else if (dur < 60) durationBuckets['30s-1m']++;
-            else if (dur < 120) durationBuckets['1m-2m']++;
-            else if (dur < 300) durationBuckets['2m-5m']++;
-            else durationBuckets['5m+']++;
-
-            const isConnected = (call.status === 'answered' || call.status === 'done' || call.status === 'completed') && dur > 0;
-
-            if (isConnected) {
-                const vStatus = (call.vapiStatus || "").toLowerCase();
-                const status = (call.status || "").toLowerCase();
-                const isCompleted =
-                    vStatus.includes("assistant-ended-call") || vStatus.includes("customer-ended-call");
-
-                if (isOwner) {
-                    ownerConnectedCount++;
-                    if (isCompleted) ownerQualifiedCount++;
-                } else if (isNormal) {
-                    normalConnectedCount++;
-                    if (isCompleted) normalQualifiedCount++;
-                }
-            }
-        });
-
-        setStats(prev => ({
-            ...prev,
-            totalCalls,
-            avgDuration: totalCalls > 0 ? totalDuration / totalCalls : 0,
-            totalCost: totalCredits,
-            successRate: totalCalls > 0 ? Math.round((successCount / totalCalls) * 100) : 0,
-            typesData: Array.from(typesMap.entries()) as any,
-            inboundDuration: inboundSum,
-            outboundDuration: outboundSum,
-            lifetimeVapiUsed: (voiceBalance?.vapi?.used !== undefined && voiceBalance?.vapi?.used !== 0) ? voiceBalance.vapi.used : lifetimeVapiUsedSum,
-            pickupRate: normalCallsInRange > 0 ? (normalConnectedCount / normalCallsInRange) * 100 : 0,
-            completionRate: normalCallsInRange > 0 ? (normalQualifiedCount / normalCallsInRange) * 100 : 0,
-            qualifiedCount,
-            connectedCount,
-            normalCalls: normalCallsInRange,
-            ownersCalls: ownersCallsInRange,
-            ownerPickupRate: ownersCallsInRange > 0 ? (ownerConnectedCount / ownersCallsInRange) * 100 : 0,
-            ownerCompletionRate: ownersCallsInRange > 0 ? (ownerQualifiedCount / ownersCallsInRange) * 100 : 0,
-            ownerPositiveRate: ownersCallsInRange > 0 ? (ownerPositiveCount / ownersCallsInRange) * 100 : 0,
-            ownerPositiveCount,
-        }));
-
-        const sortedDays = Array.from(dayMap.entries()).sort((a, b) => {
-            const dateA = new Date(`${a[0]} ${new Date().getFullYear()}`).getTime();
-            const dateB = new Date(`${b[0]} ${new Date().getFullYear()}`).getTime();
-            return dateA - dateB;
-        });
-
-        setVolumeData(sortedDays.map(([name, obj]) => ({ name, value: obj.calls })));
-        setDurationData(Object.entries(durationBuckets).map(([name, value]) => ({ name, value })));
-        setCostData(sortedDays.map(([name, obj]) => ({ name, value: obj.credits })));
-    };
+        fetch(`/api/calls/stats?${q}`)
+            .then(r => r.ok ? r.json() : Promise.reject("Fetch failed"))
+            .then(data => {
+                setStats(prev => ({
+                    ...prev,
+                    totalCalls: data.totalCalls,
+                    avgDuration: data.avgDuration,
+                    totalCost: data.totalCost,
+                    successRate: data.successRate,
+                    typesData: data.typesData || [],
+                    inboundDuration: data.inboundDuration,
+                    outboundDuration: data.outboundDuration,
+                    pickupRate: data.pickupRate,
+                    completionRate: data.completionRate,
+                    normalCalls: data.normalCalls,
+                    ownersCalls: data.ownersCalls,
+                    ownerPickupRate: data.ownerPickupRate,
+                    ownerCompletionRate: data.ownerCompletionRate,
+                    waitingAvailabilityCount: data.waitingAvailabilityCount,
+                }));
+                setVolumeData(data.volumeData || []);
+                setDurationData(data.durationData || []);
+                setCostData(data.costData || []);
+            })
+            .catch(err => console.error("Call stats fetch error:", err))
+            .finally(() => setLoadingLocal(false));
+    }, [dateRange, accountFilter]);
 
     return (
         <div className="space-y-8 pb-10 relative min-h-[500px]">
-            {loading && <ASLoader />}
+            {loadingLocal && <ASLoader />}
 
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -350,8 +195,8 @@ export default function VoiceAnalyticsPage() {
                     />
                     <StatCard
                         title="Awaiting Availability"
-                        value={`${stats.ownersCalls > 0 ? ((waitingAvailabilityCount / stats.ownersCalls) * 100).toFixed(1) : 0}%`}
-                        change={`${waitingAvailabilityCount.toLocaleString()} / ${stats.ownersCalls.toLocaleString()} calls`}
+                        value={`${stats.ownersCalls > 0 ? ((stats.waitingAvailabilityCount / stats.ownersCalls) * 100).toFixed(1) : 0}%`}
+                        change={`${stats.waitingAvailabilityCount.toLocaleString()} / ${stats.ownersCalls.toLocaleString()} calls`}
                         icon={<CheckCircle className="h-5 w-5" />}
                         color="text-blue-600"
                         bg="bg-blue-50"

@@ -13,7 +13,6 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { WhatsAppChatDetail } from "@/components/dashboard/whatsapp-chat-detail";
-import { ConsolidatedLead } from "@/lib/leads-utils";
 import {
     Dialog,
     DialogContent,
@@ -32,8 +31,8 @@ import {
     Flag
 } from "lucide-react";
 import { ASLoader } from "@/components/as-loader";
-import { useData } from "@/context/DataContext";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
+import type { ConsolidatedLead } from "@/lib/leads-utils";
 import { subDays, startOfDay, endOfDay } from "date-fns";
 import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react";
 
@@ -170,26 +169,41 @@ const sourceTabs = [
 type SourceTabKey = typeof sourceTabs[number]["key"];
 
 export default function WhatsappChatPage() {
-    const { leads: allLeads, loadingLeads, refreshLeads } = useData();
+    const [allLeads, setAllLeads] = useState<ConsolidatedLead[]>([]);
     const [leads, setLeads] = useState<ConsolidatedLead[]>([]);
-    const loading = loadingLeads;
+    const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
+
+    const [sourceTab, setSourceTab] = useState<SourceTabKey>("intro");
+    const [currentPage, setCurrentPage] = useState(1);
+    const leadsPerPage = 10;
 
     const [dateRange, setDateRange] = useState<any>({
         from: subDays(new Date(), 7),
         to: new Date(),
     });
 
+    // Fetch WhatsApp-eligible leads for the active tab (server-side consolidated & filtered)
     useEffect(() => {
-        if (dateRange?.from) {
-            refreshLeads({ from: dateRange.from, to: dateRange.to, type: 'whatsapp' });
-        }
-    }, [dateRange?.from, dateRange?.to]);
+        if (!dateRange?.from || !sourceTab) return;
+        setLoading(true);
 
-    const [currentPage, setCurrentPage] = useState(1);
-    const leadsPerPage = 10;
+        const q = new URLSearchParams({
+            from: startOfDay(dateRange.from).toISOString(),
+            to: endOfDay(dateRange.to || dateRange.from).toISOString(),
+            type: 'whatsapp',
+            sourceTable: sourceTab,
+            whatsappOnly: 'true'
+        });
 
-    const [sourceTab, setSourceTab] = useState<SourceTabKey>("intro");
+        fetch(`/api/leads?${q}`)
+            .then(r => r.ok ? r.json() : Promise.reject("Fetch failed"))
+            .then(data => {
+                setAllLeads(data.whatsappLeads ?? []);
+            })
+            .catch(err => console.error("Tab fetch error:", err))
+            .finally(() => setLoading(false));
+    }, [dateRange?.from, dateRange?.to, sourceTab]);
 
     const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
     const initialSelectedId = searchParams?.get('chat');
@@ -240,7 +254,7 @@ export default function WhatsappChatPage() {
     });
 
     useEffect(() => {
-        if (loadingLeads) return;
+        if (loading) return;
 
         const wpLeads = allLeads.filter(l => {
             const lead = l as any;
@@ -260,7 +274,7 @@ export default function WhatsappChatPage() {
 
         setLeads(wpLeads);
         setCurrentPage(1);
-    }, [allLeads, loadingLeads, sourceTab]);
+    }, [allLeads, loading, sourceTab]);
 
     const filteredLeads = useMemo(() => {
         return leads.filter(l => {

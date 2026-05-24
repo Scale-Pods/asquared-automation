@@ -5,57 +5,39 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Mail, MessageCircle, Mic, ExternalLink, Copy, Eye, EyeOff, ShieldCheck, Wallet, Phone, BarChart3, Settings, Smartphone } from "lucide-react";
-import React, { useState } from "react";
+import { Mail, MessageCircle, Mic, ExternalLink, Copy, Eye, EyeOff, ShieldCheck, Wallet, Phone, BarChart3, Settings, Smartphone, DollarSign } from "lucide-react";
+import React, { useState, useEffect } from "react";
 import { DIDBalanceDetail } from "@/components/dashboard/did-balance-detail";
 import { useRouter } from "next/navigation";
 
-import { useData } from "@/context/DataContext";
-
 export default function CredentialsPage() {
-    const { calls, voiceBalance, didBalance, loadingBalances } = useData();
-
-    const vapiAgentUsed = React.useMemo(() => {
-        if (!calls || !Array.isArray(calls)) return 0;
-        return calls.filter((c: any) => c.source === 'vapi').reduce((acc: number, call: any) => acc + (call.breakdown?.agent || 0), 0);
-    }, [calls]);
-
-    const didUsedCost = React.useMemo(() => {
-        if (!calls || !Array.isArray(calls)) return 0;
-        return calls.filter((c: any) => {
-            const isDID = c.source === 'did' || c.source === 'didlogic' || c.source === 'maqsam' || c.source === 'twilio';
-            const phoneStr = String(c.phone || c.customer_number || "");
-            const isUAE = phoneStr.startsWith('+971') || phoneStr.startsWith('971');
-            return isDID || isUAE;
-        }).reduce((acc: number, call: any) => acc + (call.costValue || 0), 0);
-    }, [calls]);
-
-    const [senderEmails, setSenderEmails] = useState<string[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [voiceBalance, setVoiceBalance] = useState<any>(null);
+    const [didBalance, setDidBalance] = useState<any>(null);
+    const [loadingBalances, setLoadingBalances] = useState(true);
+    const [totalCosts, setTotalCosts] = useState<any>(null);
     const router = useRouter();
 
     React.useEffect(() => {
-        const fetchEmails = async () => {
+        async function fetchData() {
             try {
-                const res = await fetch('/api/email/warmup-analytics', { method: 'POST' });
-                if (!res.ok) throw new Error("Failed to fetch analytics");
-                const data = await res.json();
-
-                // Extract emails from the warmup account objects
-                if (Array.isArray(data)) {
-                    const emails = data.map((account: any) => account.email);
-                    setSenderEmails(emails);
-                }
+                const [vapiRes, didRes, costRes] = await Promise.all([
+                    fetch('/api/vapi/balance'),
+                    fetch('/api/did/balance'),
+                    fetch('/api/calls/total-cost')
+                ]);
+                if (vapiRes.ok) setVoiceBalance(await vapiRes.json());
+                if (didRes.ok) setDidBalance(await didRes.json());
+                if (costRes.ok) setTotalCosts(await costRes.json());
             } catch (err) {
-                console.error("Error fetching sender emails:", err);
+                console.error("Failed to fetch balances", err);
             } finally {
-                setLoading(false);
+                setLoadingBalances(false);
             }
-        };
-
-        fetchEmails();
+        }
+        fetchData();
     }, []);
 
+    const vapiAgentUsed = voiceBalance?.vapi?.used || 0;
     const vapiDetails = voiceBalance?.vapi;
     const elDetails = voiceBalance?.elevenlabs || (voiceBalance?.character_limit ? voiceBalance : null);
 
@@ -69,26 +51,37 @@ export default function CredentialsPage() {
             </div>
 
             <div className="grid gap-6">
-                {/* Email Section */}
-                <CredentialSection
-                    title="Email Integration"
-                    description="Active sender accounts detected from your campaigns."
-                    icon={Mail}
-                    iconColor="text-rose-600"
-                    iconBg="bg-rose-50"
-                >
-                    <div className="grid gap-6 md:grid-cols-2">
-                        {loading ? (
-                            <div className="md:col-span-2 text-slate-400 text-sm animate-pulse">Detecting active email accounts...</div>
-                        ) : senderEmails.length > 0 ? (
-                            senderEmails.map((email, idx) => (
-                                <ReadOnlyField key={idx} label={`Project Email ${idx + 1}`} value={email} />
-                            ))
-                        ) : (
-                            <ReadOnlyField label="Connected Email" value="No active emails detected" />
-                        )}
-                    </div>
-                </CredentialSection>
+                {/* Cost Overview */}
+                <div className="grid gap-6 md:grid-cols-2">
+                    <Card className="border-slate-200 shadow-sm bg-white overflow-hidden">
+                        <CardContent className="p-6">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="p-2.5 rounded-xl bg-blue-50 text-blue-600">
+                                    <Mic className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-500">Total Agent Cost (Vapi)</p>
+                                    <p className="text-xs text-slate-400">Lifetime — all accounts</p>
+                                </div>
+                            </div>
+                            <p className="text-3xl font-black text-slate-900">${(totalCosts?.totalAgentCost || 0).toFixed(2)}</p>
+                        </CardContent>
+                    </Card>
+                    <Card className="border-slate-200 shadow-sm bg-white overflow-hidden">
+                        <CardContent className="p-6">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600">
+                                    <Phone className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-500">Owner Agent Cost</p>
+                                    <p className="text-xs text-slate-400">Lifetime — owners account only</p>
+                                </div>
+                            </div>
+                            <p className="text-3xl font-black text-amber-600">${(totalCosts?.ownerAgentCost || 0).toFixed(2)}</p>
+                        </CardContent>
+                    </Card>
+                </div>
 
                 {/* WhatsApp Section */}
                 <CredentialSection

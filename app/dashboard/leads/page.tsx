@@ -20,17 +20,16 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Users, AlertCircle, Loader2, RefreshCw, Mail, MessageCircle, ChevronLeft, ChevronRight, Search, Filter } from "lucide-react";
+import { Users, AlertCircle, Loader2, RefreshCw, Mail, MessageCircle, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ASLoader } from "@/components/as-loader";
-import { useMemo } from "react";
-import { useData } from "@/context/DataContext";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { subDays, startOfDay, endOfDay } from "date-fns";
+import { subDays } from "date-fns";
+import { fetchCached } from "@/lib/use-cached-fetch";
 
 interface Lead {
     id?: string;
@@ -69,15 +68,12 @@ const GLOBAL_STAGES = [
     { id: 6, label: "Day 7: WhatsApp", criteria: ["WhatsApp 4" /*, "Email 3"*/] }  // Email removed for Global
 ];
 
-const isUSALead = (phone: string) => {
-    if (!phone) return false;
-    const clean = phone.replace(/\D/g, '');
-    // standard USA format: 10 digits (no country code) or 11 digits starting with 1
-    return (clean.length === 10) || (clean.length === 11 && clean.startsWith('1'));
-};
+
 
 const getStagesForLead = (lead: Lead) => {
-    return isUSALead(lead.phone) ? USA_STAGES : GLOBAL_STAGES;
+    if (!lead.phone) return GLOBAL_STAGES;
+    const clean = lead.phone.replace(/\D/g, '');
+    return (clean.length === 10 || (clean.length === 11 && clean.startsWith('1'))) ? USA_STAGES : GLOBAL_STAGES;
 };
 
 const calculateProgress = (lead: Lead) => {
@@ -120,6 +116,8 @@ const calculateProgress = (lead: Lead) => {
 function ProgressBreakdown({ lead }: { lead: Lead }) {
     const stages = getStagesForLead(lead);
     const stagesPassed = lead.stages_passed || [];
+    const cleanPhone = lead.phone?.replace(/\D/g, '') || '';
+    const isUSALead = cleanPhone.length === 10 || (cleanPhone.length === 11 && cleanPhone.startsWith('1'));
 
     const breakdown = stages.map(stage => {
         // Special logic: Day 0 requires ALL criteria (WhatsApp AND Email for USA). 
@@ -161,7 +159,7 @@ function ProgressBreakdown({ lead }: { lead: Lead }) {
                     <DialogTitle className="flex items-center gap-2">
                         <span>Lead Journey</span>
                         <Badge variant="outline" className="ml-2 bg-slate-50">
-                            {isUSALead(lead.phone) ? "USA Flow" : "Global Flow"}
+                            {isUSALead ? "USA Flow" : "Global Flow"}
                         </Badge>
                     </DialogTitle>
                 </DialogHeader>
@@ -210,18 +208,17 @@ function ProgressBreakdown({ lead }: { lead: Lead }) {
 
 
 
-// Restore LeadsPage component
 export default function LeadsPage() {
-    const { leads, loadingLeads, refreshLeads } = useData();
+    const [leads, setLeads] = useState<any[]>([]);
+    const [totalLeads, setTotalLeads] = useState(0);
+    const [loading, setLoading] = useState(false);
     const [templates, setTemplates] = useState<any[]>([]);
-    const loadingTemplates = useState(false)[0]; // Placeholder for template loading if needed
     const [view, setView] = useState<"leads" | "templates">("leads");
     const [templateFilter, setTemplateFilter] = useState<"email" | "whatsapp">("email");
     const [error, setError] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 10;
 
-    // Filter States
     const [searchQuery, setSearchQuery] = useState("");
     const [loopFilter, setLoopFilter] = useState("all");
     const [statusFilter, setStatusFilter] = useState("all");
@@ -236,27 +233,46 @@ export default function LeadsPage() {
 
     const handleDateUpdate = ({ range }: { range: any }) => {
         setDateRange(range);
+        setCurrentPage(1);
     };
 
-    // Trigger server-side refresh when date range changes
-    useEffect(() => {
-        if (!refreshLeads) return;
-        const params = {
-            from: dateRange?.from,
-            to: dateRange?.to
-        };
-        refreshLeads(params);
-        // refreshOwners(params); // master_leads is already in refreshLeads usually, but if ownerLeads is separate:
-        // refreshOwners(params);
-    }, [dateRange, refreshLeads]);
+    const fetchLeads = async () => {
+        setLoading(true);
+        try {
+            const params = new URLSearchParams();
+            if (dateRange?.from) params.set('from', dateRange.from.toISOString());
+            if (dateRange?.to) params.set('to', dateRange.to.toISOString());
+            if (searchQuery) params.set('search', searchQuery);
+            if (activeTab) params.set('type', activeTab);
+            if (loopFilter !== 'all') params.set('loop', loopFilter);
+            if (statusFilter !== 'all') params.set('status', statusFilter);
+            if (regionFilter !== 'all') params.set('region', regionFilter);
+            if (channelFilter !== 'all') params.set('channel', channelFilter);
+            params.set('page', String(currentPage));
+            params.set('pageSize', String(itemsPerPage));
 
-    // Reset page on view or filter change
+            const data = await fetchCached(`/api/leads/overview?${params.toString()}`);
+            setLeads(data.leads || []);
+            setTotalLeads(data.total || 0);
+        } catch (err) {
+            console.error(err);
+            setLeads([]);
+            setTotalLeads(0);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (view === "leads") {
+            fetchLeads();
+        }
+    }, [view, dateRange, searchQuery, loopFilter, statusFilter, regionFilter, channelFilter, activeTab, currentPage]);
+
+    // Reset to page 1 when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [view, templateFilter, searchQuery, loopFilter, statusFilter, regionFilter, channelFilter, activeTab, dateRange]);
-
-
-    const loading = view === "leads" ? loadingLeads : false;
+    }, [searchQuery, loopFilter, statusFilter, regionFilter, channelFilter, activeTab, dateRange]);
 
     const fetchTemplates = async () => {
         setError(null);
@@ -278,73 +294,6 @@ export default function LeadsPage() {
             fetchTemplates();
         }
     }, [view]);
-
-    // Filtering Logic
-    const filteredLeads = useMemo(() => {
-        const fromDate = dateRange?.from ? startOfDay(new Date(dateRange.from)) : null;
-        const toDate = dateRange?.to ? endOfDay(new Date(dateRange.to)) : null;
-
-        const isWithinRange = (d: Date | null) => {
-            if (!fromDate || !toDate) return true;
-            if (!d) return false;
-            return d >= fromDate && d <= toDate;
-        };
-
-        return leads.filter(lead => {
-            // Date Filter
-            const leadDate = new Date(lead.created_at || 0);
-            if (!isWithinRange(leadDate)) return false;
-
-            // Tab Filter (Normal vs Owners)
-            const isMaster = lead.source_loop === "Master Leads" || lead.source_loop === "Master";
-            if (activeTab === "normal" && isMaster) return false;
-            if (activeTab === "owners" && !isMaster) return false;
-
-            // Search Query
-            if (searchQuery) {
-                const search = searchQuery.toLowerCase();
-                const matches =
-                    lead.name?.toLowerCase().includes(search) ||
-                    lead.email?.toLowerCase().includes(search) ||
-                    lead.phone?.toLowerCase().includes(search);
-                if (!matches) return false;
-            }
-
-            // Loop Filter
-            if (loopFilter !== "all") {
-                const loop = (lead.source_loop || "").toLowerCase();
-                const matches = (loopFilter === "intro" && loop === "intro") ||
-                    (loopFilter === "followup" && (loop === "follow up" || loop.includes("follow"))) ||
-                    (loopFilter === "master" && loop === "master leads") ||
-                    (loopFilter === "nurture" && loop === "nurture");
-                if (!matches) return false;
-            }
-
-            // Status Filter
-            if (statusFilter !== "all") {
-                const isReplied = (lead.replied === "Yes" || (lead.email_replied && lead.email_replied !== "No") || (lead.whatsapp_replied && lead.whatsapp_replied !== "No"));
-                if (statusFilter === "replied" && !isReplied) return false;
-                if (statusFilter === "sent" && isReplied) return false;
-            }
-
-            // Region Filter
-            if (regionFilter !== "all") {
-                const isUSA = isUSALead(lead.phone);
-                if (regionFilter === "usa" && !isUSA) return false;
-                if (regionFilter === "global" && isUSA) return false;
-            }
-
-            // Channel Filter
-            if (channelFilter !== "all") {
-                const hasEmail = lead.email && lead.email !== "No Email";
-                const hasWP = !!lead.phone;
-                if (channelFilter === "email" && !hasEmail) return false;
-                if (channelFilter === "whatsapp" && !hasWP) return false;
-            }
-
-            return true;
-        });
-    }, [leads, searchQuery, loopFilter, statusFilter, regionFilter, channelFilter, activeTab, dateRange]);
 
 
     if (error) {
@@ -383,12 +332,12 @@ export default function LeadsPage() {
                     >
                         Templates
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => view === "leads" ? refreshLeads() : fetchTemplates()}>
+                    <Button variant="outline" size="sm" onClick={() => view === "leads" ? fetchLeads() : fetchTemplates()}>
                         <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                         Refresh
                     </Button>
                     <div className="bg-white p-2 rounded-md border shadow-sm text-sm font-medium text-slate-600">
-                        {view === "leads" ? `Total Leads: ${filteredLeads.length}` : `Templates: ${templates.length}`}
+                        {view === "leads" ? `Total Leads: ${totalLeads}` : `Templates: ${templates.length}`}
                     </div>
                 </div>
             </div>
@@ -410,7 +359,7 @@ export default function LeadsPage() {
                         )}
                     </div>
                     <CardDescription>
-                        {view === "leads" ? (activeTab === "normal" ? "Real-time data from your Intro and Follow-up loops." : "Master leads and owner records.") : "Manage your messaging templates."}
+                        {view === "leads" ? (activeTab === "normal" ? "Data from the leads table." : "Data from the master_leads table.") : "Manage your messaging templates."}
                     </CardDescription>
                 </CardHeader>
 
@@ -527,14 +476,14 @@ export default function LeadsPage() {
                                                 </div>
                                             </TableCell>
                                         </TableRow>
-                                    ) : filteredLeads.length === 0 ? (
+                                    ) : leads.length === 0 ? (
                                         <TableRow>
                                             <TableCell colSpan={7} className="h-24 text-center text-slate-500">
                                                 No leads matching these filters.
                                             </TableCell>
                                         </TableRow>
                                     ) : (
-                                        filteredLeads.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((lead, index) => {
+                                        leads.map((lead, index) => {
                                             return (
                                                 <TableRow key={index} className="hover:bg-slate-50/50 transition-colors">
                                                     <TableCell className="font-medium text-slate-900">{lead.name}</TableCell>
@@ -595,7 +544,7 @@ export default function LeadsPage() {
                                 </TableBody>
                             </Table>
                             <PaginationFooter
-                                totalItems={filteredLeads.length}
+                                totalItems={totalLeads}
                                 currentPage={currentPage}
                                 itemsPerPage={itemsPerPage}
                                 onPageChange={setCurrentPage}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
     XAxis,
@@ -26,285 +26,52 @@ import { subDays, startOfDay, endOfDay } from "date-fns";
 import { ConsolidatedLead } from "@/lib/leads-utils";
 import { Button } from "@/components/ui/button";
 import { ASLoader } from "@/components/as-loader";
-import { useData } from "@/context/DataContext";
-
-const parseMsg = (raw: any): { date: Date | null, content: string } => {
-    if (!raw || !String(raw).trim()) return { date: null, content: "" };
-    const content = String(raw).trim();
-
-    // 1. Direct ISO
-    if (content.length >= 10 && !isNaN(new Date(content).getTime())) {
-        if (content.includes('T') || (content.includes('-') && content.includes(':'))) {
-            return { date: new Date(content), content: "" };
-        }
-    }
-
-    // 2. ISO at the end (with any number of newlines/spaces)
-    const isoRegex = /[\n\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*)$/;
-    const isoMatch = content.match(isoRegex);
-    if (isoMatch) {
-        const d = new Date(isoMatch[1]);
-        if (!isNaN(d.getTime())) {
-            return {
-                date: d,
-                content: content.replace(isoRegex, '').trim()
-            };
-        }
-    }
-
-    // 3. Space-separated date at the end
-    const lines = content.split('\n');
-    const lastLine = lines[lines.length - 1].trim();
-    if (lastLine.includes('-') && lastLine.includes(':')) {
-        const lastLineDate = new Date(lastLine.replace(' ', 'T'));
-        if (!isNaN(lastLineDate.getTime())) {
-            return {
-                date: lastLineDate,
-                content: lines.length > 1 ? lines.slice(0, -1).join('\n').trim() : content
-            };
-        }
-    }
-
-    return { date: null, content: content };
-};
 
 export default function WhatsappAnalyticsPage() {
-    const { leads: allLeads, loadingLeads, computeWPReplies, refreshLeads } = useData();
-    const [leads, setLeads] = useState<ConsolidatedLead[]>([]);
-    const loading = loadingLeads;
+    const [loading, setLoading] = useState(true);
+    const [stats, setStats] = useState({
+        totalSent: 0,
+        repliedCount: 0,
+        totalLeads: 0,
+        replyRate: "0%",
+        loopData: [] as any[]
+    });
+    const [ownerStats, setOwnerStats] = useState({ reachouts: 0, replies: 0, msgsSent: 0 });
+    const [trendData, setTrendData] = useState<any[]>([]);
+    const [roundData, setRoundData] = useState<any[]>([]);
     const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
         from: subDays(new Date(), 7),
         to: new Date()
     });
 
     useEffect(() => {
-        if (dateRange?.from) {
-            refreshLeads({ from: dateRange.from, to: dateRange.to, type: 'whatsapp' });
-        }
+        const from = dateRange?.from;
+        const to = dateRange?.to;
+        if (!from || !to) return;
+        const fetchData = async () => {
+            setLoading(true);
+            const q = new URLSearchParams({
+                from: startOfDay(from).toISOString(),
+                to: endOfDay(to).toISOString()
+            });
+            try {
+                const res = await fetch(`/api/whatsapp/analytics?${q}`);
+                const data = await res.json();
+                setStats({
+                    ...data.stats,
+                    loopData: data.roundData || []
+                });
+                setOwnerStats(data.ownerStats);
+                setTrendData(data.trendData);
+                setRoundData(data.roundData || []);
+            } catch (e) {
+                console.error("Analytics fetch error:", e);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchData();
     }, [dateRange?.from, dateRange?.to]);
-
-    // Owner data from master_leads table with server-side date filtering
-    const [ownerLeads, setOwnerLeads] = useState<any[]>([]);
-    const [loadingOwners, setLoadingOwners] = useState(true);
-    useEffect(() => {
-        if (!dateRange?.from || !dateRange?.to) return;
-        const q = new URLSearchParams({
-            from: startOfDay(dateRange.from).toISOString(),
-            to: endOfDay(dateRange.to).toISOString()
-        });
-        setLoadingOwners(true);
-        fetch(`/api/owner-leads?${q}`)
-            .then(res => res.json())
-            .then(data => setOwnerLeads(data.owner_data || []))
-            .catch(err => console.error("Owner fetch error:", err))
-            .finally(() => setLoadingOwners(false));
-    }, [dateRange?.from, dateRange?.to]);
-
-    const ownerStats = useMemo(() => {
-        let reachouts = 0, replies = 0, msgsSent = 0;
-        ownerLeads.forEach((o: any) => {
-            const wp1 = o["Whatsapp_1"];
-            if (!wp1 || wp1 === "" || String(wp1).toLowerCase() === "no") return;
-
-            reachouts++;
-            if (wp1) msgsSent++;
-            if (o["retry_1"]) msgsSent++;
-            for (let i = 1; i <= 10; i++) {
-                if (o[`Bot_Replied_${i}`]) msgsSent++;
-            }
-
-            const wtsReply = o["WTS_Reply_Track"];
-            if (wtsReply && wtsReply !== "" && String(wtsReply).toLowerCase() !== "no") {
-                replies++;
-            }
-        });
-        return { reachouts, replies, msgsSent };
-    }, [ownerLeads]);
-
-    const getLeadLatestActivity = (lead: any) => {
-        // PRIORITY: Use the specific reachout timestamp for Analytics
-        const wp1Ts = lead["W.P_1 TS"];
-        if (wp1Ts && wp1Ts.includes(' - ')) {
-            const parts = wp1Ts.split(' - ');
-            const datePart = parts[parts.length - 1].trim();
-            const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-            if (match) {
-                const d = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-                if (!isNaN(d.getTime())) return d;
-            }
-        }
-
-        let latest = new Date(lead.updated_at || lead.created_at);
-        const stageData = lead.stage_data || {};
-        const getD = (raw: any) => parseMsg(raw).date;
-        for (let i = 1; i <= 12; i++) {
-            let d = getD(lead[`W.P_${i}`] || stageData[`WhatsApp ${i}`]);
-            const tsRaw = lead[`W.P_${i} TS`];
-            if (!d && tsRaw && tsRaw.includes(' - ')) {
-                const parts = tsRaw.split(' - ');
-                const datePart = parts[parts.length - 1].trim();
-                const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-                if (match) {
-                    const tsDate = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-                    if (!isNaN(tsDate.getTime())) {
-                        const rawLower = tsRaw.toLowerCase();
-                        if (rawLower.includes('read') || rawLower.includes('delivered') || rawLower.includes('failed')) {
-                            tsDate.setHours(0, 0, 0, 0); 
-                        }
-                        d = tsDate;
-                    }
-                }
-            }
-            if (d && d > latest) latest = d;
-        }
-        const rd = getD(lead.whatsapp_replied || stageData["WhatsApp Replied"]);
-        if (rd && rd > latest) latest = rd;
-        const fd = getD(lead["W.P_FollowUp"] || stageData["WhatsApp FollowUp"]);
-        if (fd && fd > latest) latest = fd;
-        for (let i = 1; i <= 10; i++) {
-            const d1 = getD(lead[`W.P_Replied_${i}`]);
-            if (d1 && d1 > latest) latest = d1;
-            const d2 = getD(lead[`W.P_FollowUp_${i}`]);
-            if (d2 && d2 > latest) latest = d2;
-        }
-        return latest;
-    };
-
-    useEffect(() => {
-        if (!loadingLeads) {
-            setLeads(allLeads);
-        }
-    }, [allLeads, loadingLeads]);
-
-    const filteredLeads = useMemo(() => {
-        const fromDate = dateRange?.from ? startOfDay(new Date(dateRange.from)) : null;
-        const toDate = dateRange?.to ? endOfDay(new Date(dateRange.to)) : (fromDate ? endOfDay(new Date(fromDate)) : null);
-        const isWithinRange = (d: Date | null) => {
-            if (!fromDate || !toDate) return true;
-            if (!d) return false;
-            return d >= fromDate && d <= toDate;
-        };
-
-        return leads.filter(l => {
-            const lead = l as any;
-            
-            // Identify WhatsApp Reachout (W.P_1 not null/No) - STRICT Date Filter
-            const wp1 = lead["W.P_1"];
-            if (!wp1 || wp1 === "" || wp1 === "No") return false;
-
-            // Try to parse from content first
-            let reachoutDate = parseMsg(wp1).date;
-            
-            // Fallback to W.P_1 TS
-            if (!reachoutDate) {
-                const wp1Ts = lead["W.P_1 TS"];
-                if (wp1Ts && wp1Ts.includes(' - ')) {
-                    const parts = wp1Ts.split(' - ');
-                    const datePart = parts[parts.length - 1].trim();
-                    const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-                    if (match) {
-                        reachoutDate = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-                    }
-                }
-            }
-
-            if (!reachoutDate) return false;
-            return isWithinRange(reachoutDate);
-        });
-    }, [leads, dateRange]);
-
-    const stats = useMemo(() => {
-        let totalSent = 0;
-
-        const fromDate = dateRange?.from ? startOfDay(new Date(dateRange.from)) : null;
-        const toDate = dateRange?.to ? endOfDay(new Date(dateRange.to)) : (fromDate ? endOfDay(new Date(fromDate)) : null);
-        const isWithinRange = (d: Date | null) => {
-            if (!fromDate || !toDate) return true;
-            if (!d) return false;
-            if (d >= fromDate && d <= toDate) return true;
-            const toYYYYMMDD = (dt: Date) => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-            return toYYYYMMDD(d) >= toYYYYMMDD(fromDate) && toYYYYMMDD(d) <= toYYYYMMDD(toDate);
-        };
-
-        filteredLeads.forEach(l => {
-            const lead = l as any;
-            const stageData = lead.stage_data || {};
-            for (let i = 1; i <= 12; i++) {
-                const d = parseMsg(lead[`W.P_${i}`] || stageData[`WhatsApp ${i}`]).date;
-                if (d && isWithinRange(d)) totalSent++;
-            }
-            const df = parseMsg(lead["W.P_FollowUp"] || stageData["WhatsApp FollowUp"]).date;
-            if (df && isWithinRange(df)) totalSent++;
-            for (let i = 1; i <= 10; i++) {
-                const ds = parseMsg(lead[`W.P_FollowUp_${i}`]).date;
-                if (ds && isWithinRange(ds)) totalSent++;
-            }
-        });
-
-        // Total Replies: single source of truth from context (same logic as master dashboard)
-        const sharedRepliedCount = computeWPReplies(dateRange);
-        const replyRate = filteredLeads.length > 0 ? (sharedRepliedCount / filteredLeads.length * 100).toFixed(1) + "%" : "0%";
-
-        return {
-            totalSent,
-            repliedCount: sharedRepliedCount,
-            totalLeads: filteredLeads.length,
-            replyRate,
-            loopData: []
-        };
-    }, [filteredLeads, dateRange, computeWPReplies]);
-
-    const trendData = useMemo(() => {
-        const groups: Record<string, { date: string, sent: number, replied: number }> = {};
-        
-        const fromDate = dateRange?.from ? startOfDay(new Date(dateRange.from)) : null;
-        const toDate = dateRange?.to ? endOfDay(new Date(dateRange.to)) : (fromDate ? endOfDay(new Date(fromDate)) : null);
-        const isWithinRange = (d: Date | null) => {
-            if (!fromDate || !toDate) return true;
-            if (!d) return false;
-            return d >= fromDate && d <= toDate;
-        };
-
-        filteredLeads.forEach(l => {
-            const lead = l as any;
-            const stageData = lead.stage_data || {};
-            const latestAct = getLeadLatestActivity(lead);
-            if (!latestAct) return;
-
-            const dStr = latestAct.toLocaleDateString([], { month: 'short', day: 'numeric' });
-            if (!groups[dStr]) groups[dStr] = { date: dStr, sent: 0, replied: 0 };
-
-            // Sent
-            for (let i = 1; i <= 12; i++) {
-                const d = parseMsg(lead[`W.P_${i}`] || stageData[`WhatsApp ${i}`]).date;
-                if (d && isWithinRange(d)) groups[dStr].sent++;
-            }
-            const df = parseMsg(lead["W.P_FollowUp"] || stageData["WhatsApp FollowUp"]).date;
-            if (df && isWithinRange(df)) groups[dStr].sent++;
-            for (let i = 1; i <= 10; i++) {
-                const ds = parseMsg(lead[`W.P_FollowUp_${i}`]).date;
-                if (ds && isWithinRange(ds)) groups[dStr].sent++;
-            }
-
-            // Improved Reply Detection using WP_Replied_track
-            const replyVal = lead["WP_Replied_track"];
-            let isRepliedInRange = false;
-            
-            if (replyVal && replyVal !== "" && String(replyVal).toLowerCase() !== "no") {
-                const parsed = parseMsg(replyVal);
-                if (parsed.date) {
-                    if (isWithinRange(parsed.date)) isRepliedInRange = true;
-                } else if (String(replyVal).toLowerCase() === "yes" || String(replyVal).toLowerCase() === "replied") {
-                    if (isWithinRange(new Date(lead.created_at))) isRepliedInRange = true;
-                }
-            }
-
-            if (isRepliedInRange) {
-                groups[dStr].replied += 1;
-            }
-        });
-        return Object.values(groups).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).slice(-7);
-    }, [filteredLeads, dateRange]);
 
     return (
         <div className="space-y-4 pb-4 relative min-h-[500px]">
@@ -364,21 +131,21 @@ export default function WhatsappAnalyticsPage() {
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                     <StatCard
                         title="Owner Reachouts"
-                        value={loadingOwners ? "..." : ownerStats.reachouts.toLocaleString()}
+                        value={loading ? "..." : ownerStats.reachouts.toLocaleString()}
                         icon={Building2}
                         color="text-amber-600"
                         bg="bg-amber-50"
                     />
                     <StatCard
                         title="Owner Replies"
-                        value={loadingOwners ? "..." : ownerStats.replies.toLocaleString()}
+                        value={loading ? "..." : ownerStats.replies.toLocaleString()}
                         icon={MessageSquare}
                         color="text-emerald-600"
                         bg="bg-emerald-50"
                     />
                     <StatCard
                         title="Owner Messages Sent"
-                        value={loadingOwners ? "..." : ownerStats.msgsSent.toLocaleString()}
+                        value={loading ? "..." : ownerStats.msgsSent.toLocaleString()}
                         icon={Send}
                         color="text-amber-600"
                         bg="bg-amber-50"
@@ -433,7 +200,7 @@ export default function WhatsappAnalyticsPage() {
                                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b' }} />
                                     <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
                                     <Bar dataKey="value" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={30}>
-                                        {stats.loopData.map((entry, index) => (
+                                        {stats.loopData.map((entry: any, index: number) => (
                                             <Cell key={`cell-${index}`} fill={['#3b82f6', '#10b981', '#8b5cf6'][index % 3]} />
                                         ))}
                                     </Bar>
@@ -479,6 +246,3 @@ function StatCard({ title, value, icon: Icon, color, bg, info }: any) {
         </Card>
     );
 }
-
-
-

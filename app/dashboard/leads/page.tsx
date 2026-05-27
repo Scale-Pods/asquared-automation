@@ -28,7 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ASLoader } from "@/components/as-loader";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { subDays } from "date-fns";
+import { subDays, startOfDay } from "date-fns";
 import { fetchCached } from "@/lib/use-cached-fetch";
 
 interface Lead {
@@ -227,7 +227,7 @@ export default function LeadsPage() {
     const [activeTab, setActiveTab] = useState("normal");
 
     const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
-        from: subDays(new Date(), 7),
+        from: startOfDay(subDays(new Date(), 7)),
         to: new Date()
     });
 

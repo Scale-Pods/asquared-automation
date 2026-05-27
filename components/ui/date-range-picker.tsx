@@ -24,19 +24,31 @@ export function DateRangePicker({
     onUpdate,
     ...props
 }: DateRangePickerProps) {
+    const today = React.useRef(new Date()).current;
+
     const [date, setDate] = React.useState<DateRange | undefined>({
-        from: subDays(new Date(), 7),
-        to: new Date(),
+        from: startOfDay(subDays(today, 7)),
+        to: today,
     })
 
     const [tempDate, setTempDate] = React.useState<DateRange | undefined>(date)
     const [tempLabel, setTempLabel] = React.useState<string | undefined>("Last 7 days")
     const [open, setOpen] = React.useState(false)
     const [isMounted, setIsMounted] = React.useState(false)
+    const initialSync = React.useRef(false);
 
     React.useEffect(() => {
         setIsMounted(true)
     }, [])
+
+    React.useEffect(() => {
+        if (!initialSync.current) {
+            initialSync.current = true;
+            if (onUpdate) {
+                onUpdate({ range: date, label: tempLabel });
+            }
+        }
+    }, [onUpdate, date, tempLabel])
 
     React.useEffect(() => {
         if (open) {

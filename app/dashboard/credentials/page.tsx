@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Mail, MessageCircle, Mic, ExternalLink, Copy, Eye, EyeOff, ShieldCheck, Wallet, Phone, BarChart3, Settings, Smartphone, DollarSign } from "lucide-react";
+import { Mail, MessageCircle, Mic, ExternalLink, Copy, Eye, EyeOff, ShieldCheck, Wallet, Phone, BarChart3, Settings, Smartphone, DollarSign, Users, Activity } from "lucide-react";
 import React, { useState, useEffect } from "react";
 import { DIDBalanceDetail } from "@/components/dashboard/did-balance-detail";
 import { useRouter } from "next/navigation";
@@ -37,8 +37,6 @@ export default function CredentialsPage() {
         fetchData();
     }, []);
 
-    const vapiAgentUsed = voiceBalance?.vapi?.used || 0;
-    const vapiDetails = voiceBalance?.vapi;
     const elDetails = voiceBalance?.elevenlabs || (voiceBalance?.character_limit ? voiceBalance : null);
 
     return (
@@ -51,37 +49,7 @@ export default function CredentialsPage() {
             </div>
 
             <div className="grid gap-6">
-                {/* Cost Overview */}
-                <div className="grid gap-6 md:grid-cols-2">
-                    <Card className="border-slate-200 shadow-sm bg-white overflow-hidden">
-                        <CardContent className="p-6">
-                            <div className="flex items-center gap-3 mb-3">
-                                <div className="p-2.5 rounded-xl bg-blue-50 text-blue-600">
-                                    <Mic className="h-5 w-5" />
-                                </div>
-                                <div>
-                                    <p className="text-sm font-semibold text-slate-500">Total Agent Cost (Vapi)</p>
-                                    <p className="text-xs text-slate-400">Lifetime — all accounts</p>
-                                </div>
-                            </div>
-                            <p className="text-3xl font-black text-slate-900">${(totalCosts?.totalAgentCost || 0).toFixed(2)}</p>
-                        </CardContent>
-                    </Card>
-                    <Card className="border-slate-200 shadow-sm bg-white overflow-hidden">
-                        <CardContent className="p-6">
-                            <div className="flex items-center gap-3 mb-3">
-                                <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600">
-                                    <Phone className="h-5 w-5" />
-                                </div>
-                                <div>
-                                    <p className="text-sm font-semibold text-slate-500">Owner Agent Cost</p>
-                                    <p className="text-xs text-slate-400">Lifetime — owners account only</p>
-                                </div>
-                            </div>
-                            <p className="text-3xl font-black text-amber-600">${(totalCosts?.ownerAgentCost || 0).toFixed(2)}</p>
-                        </CardContent>
-                    </Card>
-                </div>
+                
 
                 {/* WhatsApp Section */}
                 <CredentialSection
@@ -114,10 +82,13 @@ export default function CredentialsPage() {
 
                         {/* US Section */}
                         <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-                            <ReadOnlyField label="( normal leads )" value=" " />
-                            <ReadOnlyField label="Agent ID" value=" " />
+                            <ReadOnlyField label="( Secondary leads )" value=" " />
+                            <ReadOnlyField label="Agent ID" value="c552e5b3-6c41-41d2-83b4-7c820e0d14bb " />
                         </div>
-
+                        <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                            <ReadOnlyField label="DID Logic ( unknown leads )" value="" />
+                            <ReadOnlyField label="Agent ID" value="3266ea3f-336e-436a-bd2a-63f196aab37f" />
+                        </div>
                         
                     </div>
                 </CredentialSection>
@@ -142,21 +113,32 @@ export default function CredentialsPage() {
                         </div>
                     }
                 >
-                    <div className="grid gap-6">
-                        {/* Vapi Details */}
-                        <div className="bg-blue-50/50 rounded-lg p-5 border border-blue-100 flex flex-col gap-4">
-                            <div className="flex flex-col text-center bg-white p-8 rounded-lg border border-blue-100 shadow-sm">
-                                <span className="text-sm font-bold text-slate-400 uppercase tracking-[0.2em] mb-2">Vapi Credits Used</span>
-                                <span className="text-5xl font-black text-blue-600">
-                                    ${vapiAgentUsed.toFixed(2)}
-                                </span>
-                                <p className="text-[10px] text-blue-500 mt-4 font-semibold bg-blue-50 px-3 py-1 rounded-full self-center border border-blue-100 italic">
-                                    Total Lifetime Consumption
-                                </p>
+                    <div className="grid md:grid-cols-1 gap-4">
+                        
+                        <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                            <div className="flex items-center gap-2 mb-3">
+                                <Wallet className="h-4 w-4 text-blue-500" />
+                                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Cost Breakdown by Account</span>
+                            </div>
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center text-sm">
+                                    <span className="text-slate-600">Owners</span>
+                                    <span className="font-bold text-amber-600">${(totalCosts?.ownerAgentCost || 0).toFixed(2)}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-sm">
+                                    <span className="text-slate-600">Secondary</span>
+                                    <span className="font-bold text-indigo-600">${(totalCosts?.secondaryAgentCost || 0).toFixed(2)}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-sm">
+                                    <span className="text-slate-600">Unknown</span>
+                                    <span className="font-bold text-violet-600">${(totalCosts?.unknownAgentCost || 0).toFixed(2)}</span>
+                                </div>
+                                <div className="border-t border-slate-200 pt-1 flex justify-between items-center text-sm font-bold">
+                                    <span className="text-slate-800">Total</span>
+                                    <span className="text-slate-900">${(totalCosts?.totalAgentCost || 0).toFixed(2)}</span>
+                                </div>
                             </div>
                         </div>
-
-                        
                     </div>
                 </CredentialSection>
 

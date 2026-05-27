@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Mail, MessageCircle, Mic, Settings, LogOut, ChevronDown, Wallet, BarChart2, Users, Send, Key, ExternalLink, Smartphone } from "lucide-react";
+import { LayoutDashboard, Mail, MessageCircle, Mic, Settings, LogOut, ChevronDown, Wallet, BarChart2, Users, Send, Key, ExternalLink, Smartphone, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import {
@@ -17,7 +17,7 @@ import { DataProvider } from "@/context/DataContext";
 import { DIDBalanceDetail } from "@/components/dashboard/did-balance-detail";
 import { logout } from "@/app/actions/auth";
 
-function WalletModal({ isOpen, onClose, type, voiceBalance, didBalance }: { isOpen: boolean, onClose: () => void, type: 'vapi' | 'elevenlabs' | 'did', voiceBalance?: any, didBalance?: any }) {
+function WalletModal({ isOpen, onClose, type, voiceBalance, didBalance, totalCosts }: { isOpen: boolean, onClose: () => void, type: 'vapi' | 'elevenlabs' | 'did', voiceBalance?: any, didBalance?: any, totalCosts?: any }) {
     const title = (() => {
         switch (type) {
             case 'vapi': return 'Vapi Wallet';
@@ -36,7 +36,7 @@ function WalletModal({ isOpen, onClose, type, voiceBalance, didBalance }: { isOp
         }
     })();
 
-    const vapiAgentUsed = voiceBalance?.vapi?.used || 0;
+    const vapiAgentUsed = totalCosts?.totalAgentCost || voiceBalance?.vapi?.used || 0;
     const vapiDetails = voiceBalance?.vapi;
     const elDetails = voiceBalance?.elevenlabs || (voiceBalance?.character_limit ? voiceBalance : null);
 
@@ -149,6 +149,7 @@ function DashboardContent({
 
     const [voiceBalance, setVoiceBalance] = useState<any>(null);
     const [didBalance, setDidBalance] = useState<any>(null);
+    const [totalCosts, setTotalCosts] = useState<any>(null);
     const [loadingBalances, setLoadingBalances] = useState(true);
 
     const [walletModal, setWalletModal] = useState<{ isOpen: boolean, type: 'vapi' | 'elevenlabs' | 'did' }>({
@@ -160,12 +161,14 @@ function DashboardContent({
         async function fetchBalances() {
             setLoadingBalances(true);
             try {
-                const [vapiRes, didRes] = await Promise.all([
+                const [vapiRes, didRes, costRes] = await Promise.all([
                     fetch('/api/vapi/balance'),
-                    fetch('/api/did/balance')
+                    fetch('/api/did/balance'),
+                    fetch('/api/calls/total-cost')
                 ]);
                 if (vapiRes.ok) setVoiceBalance(await vapiRes.json());
                 if (didRes.ok) setDidBalance(await didRes.json());
+                if (costRes.ok) setTotalCosts(await costRes.json());
             } catch (err) {
                 console.error("Failed to fetch balances", err);
             } finally {
@@ -175,7 +178,8 @@ function DashboardContent({
         fetchBalances();
     }, []);
 
-    const vapiAgentUsed = voiceBalance?.vapi?.used || 0;
+    const ownerCost = totalCosts?.ownerAgentCost || 0;
+    const secondaryUnknownCost = (totalCosts?.secondaryAgentCost || 0) + (totalCosts?.unknownAgentCost || 0);
 
 
     const content = (() => {
@@ -282,14 +286,27 @@ function DashboardContent({
                                 <div className="flex items-center gap-2">
                                     <Button
                                         variant="outline"
-                                        className="h-10 px-3 border-blue-200 bg-blue-50/30 hover:bg-blue-50 text-blue-700 gap-2 flex items-center shadow-sm"
+                                        className="h-10 px-3 border-amber-200 bg-amber-50/30 hover:bg-amber-50 text-amber-700 gap-2 flex items-center shadow-sm"
                                         onClick={() => setWalletModal({ isOpen: true, type: 'vapi' })}
                                     >
-                                        <Mic className="h-3.5 w-3.5" />
+                                        <Users className="h-3.5 w-3.5" />
                                         <div className="flex flex-col items-start leading-[1.1]">
-                                            <span className="text-[9px] font-bold uppercase opacity-70">Vapi Used</span>
+                                            <span className="text-[9px] font-bold uppercase opacity-70">Owners Cost</span>
                                             <span className="text-xs font-bold">
-                                                {loadingBalances ? "..." : `$${vapiAgentUsed.toFixed(2)}`}
+                                                {loadingBalances ? "..." : `$${ownerCost.toFixed(2)}`}
+                                            </span>
+                                        </div>
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        className="h-10 px-3 border-indigo-200 bg-indigo-50/30 hover:bg-indigo-50 text-indigo-700 gap-2 flex items-center shadow-sm"
+                                        onClick={() => setWalletModal({ isOpen: true, type: 'vapi' })}
+                                    >
+                                        <Activity className="h-3.5 w-3.5" />
+                                        <div className="flex flex-col items-start leading-[1.1]">
+                                            <span className="text-[9px] font-bold uppercase opacity-70">Sec+Unk Cost</span>
+                                            <span className="text-xs font-bold">
+                                                {loadingBalances ? "..." : `$${secondaryUnknownCost.toFixed(2)}`}
                                             </span>
                                         </div>
                                     </Button>
@@ -316,6 +333,7 @@ function DashboardContent({
                         type={walletModal.type}
                         voiceBalance={voiceBalance}
                         didBalance={didBalance}
+                        totalCosts={totalCosts}
                         onClose={() => setWalletModal({ ...walletModal, isOpen: false })}
                     />
 

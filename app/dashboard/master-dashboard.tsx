@@ -32,7 +32,7 @@ import { TotalRepliesView, type ReplyData } from "@/components/dashboard/total-r
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
-import { subDays } from "date-fns";
+import { subDays, startOfDay } from "date-fns";
 import { ASLoader } from "@/components/as-loader";
 import { fetchCached } from "@/lib/use-cached-fetch";
 
@@ -76,8 +76,8 @@ export default function MasterDashboard() {
     const [isRepliesModalOpen, setIsRepliesModalOpen] = useState(false);
     const [isRepliesExpanded, setIsRepliesExpanded] = useState(false);
     const [dateLabel, setDateLabel] = useState("Last 7 Days");
-    const [dateRange, setDateRange] = useState<any>({
-        from: subDays(new Date(), 7),
+    const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
+        from: startOfDay(subDays(new Date(), 7)),
         to: new Date()
     });
     const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);

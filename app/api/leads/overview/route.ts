@@ -51,8 +51,8 @@ export async function GET(req: Request) {
 
     try {
         const [leadsResult, masterLeadsResult, introResult, introUkResult, followUpResult, followUpUkResult] = await Promise.all([
-            fetchAllRows(baseUrl, headers, "leads", null, null, null),
-            fetchAllRows(baseUrl, headers, "master_leads", null, null, null),
+            fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
+            fetchAllRows(baseUrl, headers, "master_leads", "last_contacted", from, to),
             fetchAllRows(baseUrl, headers, "intro", "WP_last_contacted", from, to),
             fetchAllRows(baseUrl, headers, "intro_uk", "WP_last_contacted", from, to),
             fetchAllRows(baseUrl, headers, "follow_up", "WP_last_contacted", from, to),
@@ -82,8 +82,8 @@ export async function GET(req: Request) {
                 if (!isMaster && !isLeads) return false;
             }
 
-            const fallbackDate = isMaster ? lead.last_contacted : null;
-            const d = new Date(lead.created_at || fallbackDate || 0);
+            const dateCol = lead.WP_last_contacted || lead.last_outreach_at || lead.last_contacted || lead.created_at;
+            const d = new Date(dateCol || 0);
             if (!isWithinCreatedRange(d)) return false;
 
             if (search) {

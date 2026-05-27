@@ -1,23 +1,18 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
     Users,
-    Mail,
     MessageCircle,
     Phone,
     TrendingUp,
-    Zap,
-    BarChart3,
     PieChart as PieChartIcon,
-    ArrowUpRight,
-    ArrowDownRight,
     Activity,
+    Crown,
+    Expand,
     Maximize2,
     Minimize2,
     X,
-    Expand,
-    Wallet,
     Info
 } from "lucide-react";
 import {
@@ -34,8 +29,6 @@ import {
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
-    BarChart,
-    Bar,
     Cell,
     PieChart,
     Pie,
@@ -56,9 +49,13 @@ interface AnalyticsResponse {
     emailCount: number;
     whatsappReachouts: number;
     totalVoiceCalls: number;
+    secondaryVoiceCalls: number;
+    unknownVoiceCalls: number;
     ownerVoiceCalls: number;
     totalVoiceSeconds: number;
     voiceMinutesString: string;
+    secondaryVoiceDurationString: string;
+    unknownVoiceDurationString: string;
     ownerVoiceDurationString: string;
     totalReplies: number;
     totalOwnerLeads: number;
@@ -69,7 +66,6 @@ interface AnalyticsResponse {
     oldestWPDate: string;
     ownerLeadsSince: string;
     ownerWhatsappSince: string;
-    ownerVoiceSince: string;
     ownerRepliesSince: string;
     acquisitionChartData: { name: string; leads: number }[];
     replyLeads: any[];
@@ -98,7 +94,6 @@ export default function MasterDashboard() {
     const [voiceBalance, setVoiceBalance] = useState<any>(null);
     const [didBalance, setDidBalance] = useState<any>(null);
 
-    // Fetch full analytics from server
     useEffect(() => {
         if (!dateRange?.from) return;
         setLoading(true);
@@ -118,7 +113,6 @@ export default function MasterDashboard() {
         .finally(() => setLoading(false));
     }, [dateRange]);
 
-    // Fetch source-table aggregation stats
     useEffect(() => {
         if (!dateRange?.from) return;
         const q = new URLSearchParams({
@@ -140,7 +134,11 @@ export default function MasterDashboard() {
     const router = useRouter();
     const s = analytics;
 
-    // Derived Pie Chart Data
+    const secondaryVoiceTotal = (s?.secondaryVoiceCalls || 0) + (s?.unknownVoiceCalls || 0);
+    const secondaryVoiceDuration = s?.secondaryVoiceDurationString && s?.unknownVoiceDurationString
+        ? `${s.secondaryVoiceDurationString} + ${s.unknownVoiceDurationString}`
+        : (s?.voiceMinutesString ?? "...");
+
     const realServiceDistribution = [
         { name: 'Email', value: s?.emailCount || 0, color: '#3b82f6' },
         { name: 'WhatsApp', value: s?.whatsappReachouts || 0, color: '#10b981' },
@@ -159,10 +157,10 @@ export default function MasterDashboard() {
                 <DateRangePicker onUpdate={handleDateUpdate} />
             </div>
 
-            {/* Source Table Breakdown */}
+            {/* Source Table Breakdown - Secondary & Unknown */}
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 <MetricCard
-                    title="Intro (US)"
+                    title="Secondary Intro"
                     value={loading ? "..." : sourceStats.intro.toLocaleString()}
                     change="source: intro"
                     isUp={true}
@@ -172,7 +170,7 @@ export default function MasterDashboard() {
                     border="border-blue-100"
                 />
                 <MetricCard
-                    title="Intro (UK)"
+                    title="Unknown Intro"
                     value={loading ? "..." : sourceStats.intro_uk.toLocaleString()}
                     change="source: intro_uk"
                     isUp={true}
@@ -182,7 +180,7 @@ export default function MasterDashboard() {
                     border="border-sky-100"
                 />
                 <MetricCard
-                    title="Follow Up (US)"
+                    title="Secondary Follow Up"
                     value={loading ? "..." : sourceStats.follow_up.toLocaleString()}
                     change="source: follow_up"
                     isUp={true}
@@ -192,7 +190,7 @@ export default function MasterDashboard() {
                     border="border-purple-100"
                 />
                 <MetricCard
-                    title="Follow Up (UK)"
+                    title="Unknown Follow Up"
                     value={loading ? "..." : sourceStats.follow_up_uk.toLocaleString()}
                     change="source: follow_up_uk"
                     isUp={true}
@@ -201,97 +199,26 @@ export default function MasterDashboard() {
                     bg="bg-violet-50"
                     border="border-violet-100"
                 />
-            </div>
-
-            {/* Normal Data Section */}
-            <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                    <div className="p-2 bg-blue-100 text-blue-700 rounded-lg">
-                        <BarChart3 className="h-5 w-5" />
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-900">Normal Data</h2>
-                    <p className="text-sm text-slate-400">Connected to: leads, intro, intro_uk, follow_up, follow_up_uk</p>
-                </div>
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 <MetricCard
-                    title="Total Leads"
-                    value={loading ? "..." : (s?.normalLeadsCount ?? 0).toLocaleString()}
-                    change={s?.oldestLeadDate ?? "..."}
+                    title="Leads"
+                    value={loading ? "..." : sourceStats.leads.toLocaleString()}
+                    change="source: leads"
                     isUp={true}
                     icon={<Users className="h-6 w-6" />}
-                    color="text-blue-600"
-                    bg="bg-blue-50"
-                    border="border-blue-100"
-                    onClick={() => router.push('/dashboard/leads')}
-                />
-                <MetricCard
-                    title="Total Emails Sent"
-                    value={loading ? "..." : (s?.emailCount ?? 0).toLocaleString()}
-                    change={s?.oldestEmailDate ?? "..."}
-                    isUp={true}
-                    icon={<Mail className="h-6 w-6" />}
                     color="text-emerald-600"
                     bg="bg-emerald-50"
                     border="border-emerald-100"
-                    onClick={() => router.push('/dashboard/email/sent')}
-                />
-                <MetricCard
-                    title="Total Whatsapp Reachouts"
-                    value={loading ? "..." : (s?.whatsappReachouts ?? 0).toLocaleString()}
-                    change={s?.oldestWPDate ?? "..."}
-                    isUp={true}
-                    icon={<MessageCircle className="h-6 w-6" />}
-                    color="text-purple-600"
-                    bg="bg-purple-50"
-                    border="border-purple-100"
-                    onClick={() => router.push('/dashboard/whatsapp/chat')}
-                />
-                <MetricCard
-                    title="Total Voice Calls"
-                    value={loading ? "..." : (s?.totalVoiceCalls ?? 0).toLocaleString()}
-                    change={s?.voiceMinutesString ?? "..."}
-                    isUp={true}
-                    icon={<Activity className="h-6 w-6" />}
-                    color="text-orange-600"
-                    bg="bg-orange-50"
-                    border="border-orange-100"
-                    onClick={() => router.push('/dashboard/voice')}
-                    info="This shows Normal calls containing US, UK, UAE, and 1731 leads."
-                />
-
-                <MetricCard
-                    title="Total Replies"
-                    value={loading ? "..." : (s?.totalReplies ?? 0).toLocaleString()}
-                    change={`${(s?.whatsappReachouts ?? 0) > 0 ? (((s?.totalReplies ?? 0) / (s?.whatsappReachouts ?? 1)) * 100).toFixed(1) : 0}% Rate`}
-                    isUp={true}
-                    icon={<Expand className="h-6 w-6" />}
-                    color="text-indigo-600"
-                    bg="bg-indigo-50"
-                    border="border-indigo-100"
-                    onClick={() => setIsRepliesModalOpen(true)}
-                    info="This rate is calculated as (Total Replies / Total WhatsApp Reachouts). Disclaimer: This feature has been installed now. To check original replies and rates, please select the 'Last 3 Months' filter."
-                    action={<Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-slate-400 hover:text-slate-600"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setIsRepliesExpanded(!isRepliesExpanded);
-                        }}
-                    >
-                        {isRepliesExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                    </Button>}
                 />
             </div>
-            </div>
 
-            {/* Owner Leads Data Section */}
+            {/* Owner Leads Data Row */}
             <div className="space-y-4">
                 <div className="flex items-center gap-2">
                     <div className="p-2 bg-amber-100 text-amber-700 rounded-lg">
-                        <Users className="h-5 w-5" />
+                        <Crown className="h-5 w-5" />
                     </div>
                     <h2 className="text-xl font-bold text-slate-900">Owner Leads Data</h2>
+                    <p className="text-sm text-slate-400">Source: master_leads | Voice: vapi_call_logs</p>
                 </div>
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
                     <MetricCard
@@ -305,7 +232,7 @@ export default function MasterDashboard() {
                         border="border-amber-100"
                     />
                     <MetricCard
-                        title="Total Whatsapp Reachouts (owner)"
+                        title="WhatsApp Reachouts (Owner)"
                         value={loading ? "..." : (s?.ownerWhatsappReachouts ?? 0).toLocaleString()}
                         change={s?.ownerWhatsappSince ?? "..."}
                         isUp={true}
@@ -315,18 +242,18 @@ export default function MasterDashboard() {
                         border="border-emerald-100"
                     />
                     <MetricCard
-                        title="Total Voice Calls (owner)"
+                        title="Voice Calls (Owner)"
                         value={loading ? "..." : (s?.ownerVoiceCalls ?? 0).toLocaleString()}
-                        change={s?.ownerVoiceSince ?? "..."}
+                        change={s?.ownerVoiceDurationString ?? "..."}
                         isUp={true}
                         icon={<Phone className="h-6 w-6" />}
                         color="text-blue-600"
                         bg="bg-blue-50"
                         border="border-blue-100"
-                        info="This count is derived from real-time Vapi call logs for the 'owners' account."
+                        info="From vapi_call_logs (owners assistant)."
                     />
                     <MetricCard
-                        title="Total Replies (owner)"
+                        title="Total Replies (Owner)"
                         value={loading ? "..." : (s?.ownerTotalReplies ?? 0).toLocaleString()}
                         change={s?.ownerRepliesSince ?? "..."}
                         isUp={true}
@@ -334,6 +261,76 @@ export default function MasterDashboard() {
                         color="text-purple-600"
                         bg="bg-purple-50"
                         border="border-purple-100"
+                    />
+                </div>
+            </div>
+
+            {/* Unknown + Secondary Leads Data Row */}
+            <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                    <div className="p-2 bg-indigo-100 text-indigo-700 rounded-lg">
+                        <Users className="h-5 w-5" />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900">Unknown & Secondary Leads Data</h2>
+                    <p className="text-sm text-slate-400">Source: leads, intro, intro_uk, follow_up, follow_up_uk | Voice: vapi_call_logs_nf</p>
+                </div>
+                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+                    <MetricCard
+                        title="Total Leads"
+                        value={loading ? "..." : (s?.normalLeadsCount ?? 0).toLocaleString()}
+                        change={s?.oldestLeadDate ?? "..."}
+                        isUp={true}
+                        icon={<Users className="h-6 w-6" />}
+                        color="text-indigo-600"
+                        bg="bg-indigo-50"
+                        border="border-indigo-100"
+                        onClick={() => router.push('/dashboard/leads')}
+                    />
+                    <MetricCard
+                        title="WhatsApp Reachouts"
+                        value={loading ? "..." : (s?.whatsappReachouts ?? 0).toLocaleString()}
+                        change={s?.oldestWPDate ?? "..."}
+                        isUp={true}
+                        icon={<MessageCircle className="h-6 w-6" />}
+                        color="text-purple-600"
+                        bg="bg-purple-50"
+                        border="border-purple-100"
+                        onClick={() => router.push('/dashboard/whatsapp/chat')}
+                    />
+                    <MetricCard
+                        title="Voice Calls (Sec. + Unk.)"
+                        value={loading ? "..." : secondaryVoiceTotal.toLocaleString()}
+                        change={secondaryVoiceDuration}
+                        isUp={true}
+                        icon={<Activity className="h-6 w-6" />}
+                        color="text-orange-600"
+                        bg="bg-orange-50"
+                        border="border-orange-100"
+                        onClick={() => router.push('/dashboard/voice')}
+                        info="Combined secondary + unknown calls from vapi_call_logs_nf."
+                    />
+                    <MetricCard
+                        title="Total Replies"
+                        value={loading ? "..." : (s?.totalReplies ?? 0).toLocaleString()}
+                        change={`${(s?.whatsappReachouts ?? 0) > 0 ? (((s?.totalReplies ?? 0) / (s?.whatsappReachouts ?? 1)) * 100).toFixed(1) : 0}% Rate`}
+                        isUp={true}
+                        icon={<Expand className="h-6 w-6" />}
+                        color="text-indigo-600"
+                        bg="bg-indigo-50"
+                        border="border-indigo-100"
+                        onClick={() => setIsRepliesModalOpen(true)}
+                        info="Rate = Total Replies / Total WhatsApp Reachouts."
+                        action={<Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-slate-400 hover:text-slate-600"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsRepliesExpanded(!isRepliesExpanded);
+                            }}
+                        >
+                            {isRepliesExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                        </Button>}
                     />
                 </div>
             </div>
@@ -367,9 +364,8 @@ export default function MasterDashboard() {
                 </DialogContent>
             </Dialog>
 
-            {/* Charts Row 1: Lead Acquisition & Service Distribution */}
+            {/* Charts Row */}
             <div className="grid gap-6 lg:grid-cols-3">
-                {/* Lead Acquisition Area Chart */}
                 <Card className="lg:col-span-2 border-slate-200 shadow-sm bg-white overflow-hidden">
                     <CardHeader className="pb-2">
                         <div className="flex items-center justify-between">
@@ -402,7 +398,6 @@ export default function MasterDashboard() {
                     </CardContent>
                 </Card>
 
-                {/* Service Distribution Pie Chart */}
                 <Card className="border-slate-200 shadow-sm bg-white overflow-hidden">
                     <CardHeader className="pb-2">
                         <div className="flex items-center gap-2">

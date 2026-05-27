@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { RefreshCw, ChevronLeft, ChevronRight, User, Download, Search, Info, Activity, Crown, FileSpreadsheet } from "lucide-react";
+import { RefreshCw, ChevronLeft, ChevronRight, User, Download, Search, Info, Activity, Crown, FileSpreadsheet, Phone } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ASLoader } from "@/components/as-loader";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";

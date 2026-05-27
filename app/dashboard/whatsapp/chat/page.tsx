@@ -160,10 +160,10 @@ const getLeadLatestActivity = (lead: any) => {
 };
 
 const sourceTabs = [
-    { key: "intro", label: "Intro (US)", icon: Globe },
-    { key: "intro_uk", label: "Intro (UK)", icon: Flag },
-    { key: "follow_up", label: "Follow Up (US)", icon: Globe },
-    { key: "follow_up_uk", label: "Follow Up (UK)", icon: Flag },
+    { key: "intro", label: "Secondary Intro", icon: Globe },
+    { key: "intro_uk", label: "Unknown Intro", icon: Flag },
+    { key: "follow_up", label: "Secondary Follow Up", icon: Globe },
+    { key: "follow_up_uk", label: "Unknown Follow Up", icon: Flag },
 ] as const;
 
 type SourceTabKey = typeof sourceTabs[number]["key"];

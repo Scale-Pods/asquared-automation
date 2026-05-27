@@ -13,14 +13,7 @@ import {
     Maximize2,
     Minimize2,
     X,
-    Info
 } from "lucide-react";
-import {
-    Tooltip as UITooltip,
-    TooltipContent as UITooltipContent,
-    TooltipProvider as UITooltipProvider,
-    TooltipTrigger as UITooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
     AreaChart,
     Area,
@@ -39,7 +32,6 @@ import { TotalRepliesView, type ReplyData } from "@/components/dashboard/total-r
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { subDays } from "date-fns";
 import { ASLoader } from "@/components/as-loader";
 import { fetchCached } from "@/lib/use-cached-fetch";
@@ -131,7 +123,6 @@ export default function MasterDashboard() {
         setDateRange(range);
     };
 
-    const router = useRouter();
     const s = analytics;
 
     const secondaryVoiceTotal = (s?.secondaryVoiceCalls || 0) + (s?.unknownVoiceCalls || 0);
@@ -146,191 +137,147 @@ export default function MasterDashboard() {
     ];
 
     return (
-        <div className="space-y-8 pb-10 relative min-h-[500px]">
+        <div className="space-y-3 pb-10 relative min-h-[500px]">
             {loading && <ASLoader />}
             {/* Header Section */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Master Overview</h1>
-                    <p className="text-slate-500">Holistic view of all your marketing channels performance.</p>
+                    <h1 className="text-xl font-bold text-slate-900">Master Overview</h1>
+                    <p className="text-xs text-slate-500">Holistic view of all your marketing channels performance.</p>
                 </div>
                 <DateRangePicker onUpdate={handleDateUpdate} />
             </div>
 
             {/* Source Table Breakdown - Secondary & Unknown */}
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                <MetricCard
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                <CompactCard
                     title="Secondary Intro"
                     value={loading ? "..." : sourceStats.intro.toLocaleString()}
-                    change="source: intro"
-                    isUp={true}
-                    icon={<Users className="h-6 w-6" />}
+                    subtitle="intro"
+                    icon={<Users className="h-5 w-5" />}
                     color="text-blue-600"
                     bg="bg-blue-50"
-                    border="border-blue-100"
                 />
-                <MetricCard
+                <CompactCard
                     title="Unknown Intro"
                     value={loading ? "..." : sourceStats.intro_uk.toLocaleString()}
-                    change="source: intro_uk"
-                    isUp={true}
-                    icon={<Users className="h-6 w-6" />}
+                    subtitle="intro_uk"
+                    icon={<Users className="h-5 w-5" />}
                     color="text-sky-600"
                     bg="bg-sky-50"
-                    border="border-sky-100"
                 />
-                <MetricCard
+                <CompactCard
                     title="Secondary Follow Up"
                     value={loading ? "..." : sourceStats.follow_up.toLocaleString()}
-                    change="source: follow_up"
-                    isUp={true}
-                    icon={<MessageCircle className="h-6 w-6" />}
+                    subtitle="follow_up"
+                    icon={<MessageCircle className="h-5 w-5" />}
                     color="text-purple-600"
                     bg="bg-purple-50"
-                    border="border-purple-100"
                 />
-                <MetricCard
+                <CompactCard
                     title="Unknown Follow Up"
                     value={loading ? "..." : sourceStats.follow_up_uk.toLocaleString()}
-                    change="source: follow_up_uk"
-                    isUp={true}
-                    icon={<MessageCircle className="h-6 w-6" />}
+                    subtitle="follow_up_uk"
+                    icon={<MessageCircle className="h-5 w-5" />}
                     color="text-violet-600"
                     bg="bg-violet-50"
-                    border="border-violet-100"
                 />
-                <MetricCard
+                <CompactCard
                     title="Leads"
                     value={loading ? "..." : sourceStats.leads.toLocaleString()}
-                    change="source: leads"
-                    isUp={true}
-                    icon={<Users className="h-6 w-6" />}
+                    subtitle="leads"
+                    icon={<Users className="h-5 w-5" />}
                     color="text-emerald-600"
                     bg="bg-emerald-50"
-                    border="border-emerald-100"
                 />
             </div>
 
             {/* Owner Leads Data Row */}
-            <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                    <div className="p-2 bg-amber-100 text-amber-700 rounded-lg">
-                        <Crown className="h-5 w-5" />
+            <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                    <div className="p-1 bg-amber-100 text-amber-700 rounded-md">
+                        <Crown className="h-3.5 w-3.5" />
                     </div>
-                    <h2 className="text-xl font-bold text-slate-900">Owner Leads Data</h2>
-                    <p className="text-sm text-slate-400">Source: master_leads | Voice: vapi_call_logs</p>
+                    <h2 className="text-sm font-bold text-slate-900">Owner Leads Data</h2>
+                    <span className="text-[10px] text-slate-400">master_leads | voice: vapi_call_logs</span>
                 </div>
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-                    <MetricCard
+                <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+                    <CompactCard
                         title="Total Owner Leads"
                         value={loading ? "..." : (s?.totalOwnerLeads ?? 0).toLocaleString()}
-                        change={s?.ownerLeadsSince ?? "..."}
-                        isUp={true}
-                        icon={<Users className="h-6 w-6" />}
+                        subtitle={s?.ownerLeadsSince ?? "..."}
+                        icon={<Users className="h-5 w-5" />}
                         color="text-amber-600"
                         bg="bg-amber-50"
-                        border="border-amber-100"
                     />
-                    <MetricCard
-                        title="WhatsApp Reachouts (Owner)"
+                    <CompactCard
+                        title="WhatsApp Reachouts"
                         value={loading ? "..." : (s?.ownerWhatsappReachouts ?? 0).toLocaleString()}
-                        change={s?.ownerWhatsappSince ?? "..."}
-                        isUp={true}
-                        icon={<MessageCircle className="h-6 w-6" />}
+                        subtitle={s?.ownerWhatsappSince ?? "..."}
+                        icon={<MessageCircle className="h-5 w-5" />}
                         color="text-emerald-600"
                         bg="bg-emerald-50"
-                        border="border-emerald-100"
                     />
-                    <MetricCard
-                        title="Voice Calls (Owner)"
+                    <CompactCard
+                        title="Voice Calls"
                         value={loading ? "..." : (s?.ownerVoiceCalls ?? 0).toLocaleString()}
-                        change={s?.ownerVoiceDurationString ?? "..."}
-                        isUp={true}
-                        icon={<Phone className="h-6 w-6" />}
+                        subtitle={s?.ownerVoiceDurationString ?? "..."}
+                        icon={<Phone className="h-5 w-5" />}
                         color="text-blue-600"
                         bg="bg-blue-50"
-                        border="border-blue-100"
-                        info="From vapi_call_logs (owners assistant)."
                     />
-                    <MetricCard
-                        title="Total Replies (Owner)"
+                    <CompactCard
+                        title="Total Replies"
                         value={loading ? "..." : (s?.ownerTotalReplies ?? 0).toLocaleString()}
-                        change={s?.ownerRepliesSince ?? "..."}
-                        isUp={true}
-                        icon={<MessageCircle className="h-6 w-6" />}
+                        subtitle={s?.ownerRepliesSince ?? "..."}
+                        icon={<MessageCircle className="h-5 w-5" />}
                         color="text-purple-600"
                         bg="bg-purple-50"
-                        border="border-purple-100"
                     />
                 </div>
             </div>
 
             {/* Unknown + Secondary Leads Data Row */}
-            <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                    <div className="p-2 bg-indigo-100 text-indigo-700 rounded-lg">
-                        <Users className="h-5 w-5" />
+            <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                    <div className="p-1 bg-indigo-100 text-indigo-700 rounded-md">
+                        <Users className="h-3.5 w-3.5" />
                     </div>
-                    <h2 className="text-xl font-bold text-slate-900">Unknown & Secondary Leads Data</h2>
-                    <p className="text-sm text-slate-400">Source: leads, intro, intro_uk, follow_up, follow_up_uk | Voice: vapi_call_logs_nf</p>
+                    <h2 className="text-sm font-bold text-slate-900">Unknown & Secondary Leads Data</h2>
+                    <span className="text-[10px] text-slate-400">leads, intro, follow_up | voice: vapi_call_logs_nf</span>
                 </div>
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-                    <MetricCard
+                <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+                    <CompactCard
                         title="Total Leads"
                         value={loading ? "..." : (s?.normalLeadsCount ?? 0).toLocaleString()}
-                        change={s?.oldestLeadDate ?? "..."}
-                        isUp={true}
-                        icon={<Users className="h-6 w-6" />}
+                        subtitle={s?.oldestLeadDate ?? "..."}
+                        icon={<Users className="h-5 w-5" />}
                         color="text-indigo-600"
                         bg="bg-indigo-50"
-                        border="border-indigo-100"
-                        onClick={() => router.push('/dashboard/leads')}
                     />
-                    <MetricCard
+                    <CompactCard
                         title="WhatsApp Reachouts"
                         value={loading ? "..." : (s?.whatsappReachouts ?? 0).toLocaleString()}
-                        change={s?.oldestWPDate ?? "..."}
-                        isUp={true}
-                        icon={<MessageCircle className="h-6 w-6" />}
+                        subtitle={s?.oldestWPDate ?? "..."}
+                        icon={<MessageCircle className="h-5 w-5" />}
                         color="text-purple-600"
                         bg="bg-purple-50"
-                        border="border-purple-100"
-                        onClick={() => router.push('/dashboard/whatsapp/chat')}
                     />
-                    <MetricCard
-                        title="Voice Calls (Sec. + Unk.)"
+                    <CompactCard
+                        title="Voice Calls"
                         value={loading ? "..." : secondaryVoiceTotal.toLocaleString()}
-                        change={secondaryVoiceDuration}
-                        isUp={true}
-                        icon={<Activity className="h-6 w-6" />}
+                        subtitle={secondaryVoiceDuration}
+                        icon={<Activity className="h-5 w-5" />}
                         color="text-orange-600"
                         bg="bg-orange-50"
-                        border="border-orange-100"
-                        onClick={() => router.push('/dashboard/voice')}
-                        info="Combined secondary + unknown calls from vapi_call_logs_nf."
                     />
-                    <MetricCard
+                    <CompactCard
                         title="Total Replies"
                         value={loading ? "..." : (s?.totalReplies ?? 0).toLocaleString()}
-                        change={`${(s?.whatsappReachouts ?? 0) > 0 ? (((s?.totalReplies ?? 0) / (s?.whatsappReachouts ?? 1)) * 100).toFixed(1) : 0}% Rate`}
-                        isUp={true}
-                        icon={<Expand className="h-6 w-6" />}
+                        subtitle={`${(s?.whatsappReachouts ?? 0) > 0 ? (((s?.totalReplies ?? 0) / (s?.whatsappReachouts ?? 1)) * 100).toFixed(1) : 0}% rate`}
+                        icon={<Expand className="h-5 w-5" />}
                         color="text-indigo-600"
                         bg="bg-indigo-50"
-                        border="border-indigo-100"
-                        onClick={() => setIsRepliesModalOpen(true)}
-                        info="Rate = Total Replies / Total WhatsApp Reachouts."
-                        action={<Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-slate-400 hover:text-slate-600"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setIsRepliesExpanded(!isRepliesExpanded);
-                            }}
-                        >
-                            {isRepliesExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                        </Button>}
                     />
                 </div>
             </div>
@@ -344,7 +291,7 @@ export default function MasterDashboard() {
                             <p className="text-sm text-slate-500">Detailed view of all replies across channels</p>
                         </div>
                         <Button variant="ghost" size="sm" onClick={() => setIsRepliesExpanded(false)}>
-                            <X className="h-4 w-4 mr-2" />
+                            <X className="h-5 w-5 mr-2" />
                             Close
                         </Button>
                     </div>
@@ -436,57 +383,24 @@ export default function MasterDashboard() {
     );
 }
 
-function MetricCard({ title, value, change, isUp, icon, color, bg, border, onClick, action, subtitle, info }: {
+function CompactCard({ title, value, subtitle, icon, color, bg }: {
     title: string,
     value: string,
-    change: string,
-    isUp: boolean,
+    subtitle?: string,
     icon: React.ReactNode,
     color: string,
     bg: string,
-    border: string,
-    onClick?: () => void,
-    action?: React.ReactNode,
-    subtitle?: string,
-    info?: string
 }) {
     return (
-        <Card
-            className={`bg-white border ${border} shadow-sm overflow-hidden relative group hover:shadow-md transition-all duration-300 ${onClick ? 'cursor-pointer' : ''}`}
-            onClick={onClick}
-        >
-            <CardContent className="p-6">
-                <div className="flex items-start justify-between relative z-10">
-                    <div className="flex-1">
-                        <div className="flex items-center justify-between mr-2">
-                            <div className="flex items-center gap-1.5">
-                                <p className="text-sm font-semibold text-slate-500 mb-1">{title}</p>
-                                {info && (
-                                    <UITooltipProvider>
-                                    <UITooltip>
-                                        <UITooltipTrigger asChild>
-                                            <Info className="h-7 w-7 text-red-500 mb-1 cursor-help hover:text-red-600 transition-colors" />
-                                        </UITooltipTrigger>
-                                        <UITooltipContent className="max-w-[250px] bg-slate-900 text-white border-none p-3 shadow-xl">
-                                            <p className="text-[11px] leading-relaxed">{info}</p>
-                                        </UITooltipContent>
-                                    </UITooltip>
-                                </UITooltipProvider>
-                                )}
-                            </div>
-                            {subtitle && <p className="text-xs text-slate-400 mb-2">{subtitle}</p>}
-                            {action && <div className="z-20">{action}</div>}
-                        </div>
-                        <h3 className="text-3xl font-bold text-slate-900">{value}</h3>
-                        <div className={`flex items-center gap-1 mt-2 text-xs font-bold ${isUp ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {change}
-                        </div>
-                    </div>
-                    <div className={`p-4 rounded-2xl ${bg} ${color} shadow-sm`}>
-                        {icon}
-                    </div>
-                </div>
-            </CardContent>
-        </Card>
+        <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 flex items-center gap-4 shadow-sm">
+            <div className={`p-3 rounded-lg ${bg} ${color}`}>
+                {icon}
+            </div>
+            <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">{title}</p>
+                <p className="text-xl font-bold text-slate-900 leading-tight">{value}</p>
+                {subtitle && <p className="text-[11px] text-slate-400 truncate">{subtitle}</p>}
+            </div>
+        </div>
     );
 }

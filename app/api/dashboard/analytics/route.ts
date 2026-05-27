@@ -324,23 +324,21 @@ export async function GET(req: Request) {
         let ownerVoiceSeconds = 0;
         allCalls.forEach((call: any) => {
             if (!isWithinRange(new Date(call.created_at || 0), fromDate, toDate)) return;
-            if (call.source === 'vapi') {
-                const aid = call.assistantId || '';
-                const isSecondary = aid === SEC_ASSISTANT;
-                const isUnknown = aid === UNKNOWN_ASSISTANT;
-                const isOwner = aid === OWNERS_ASSISTANT;
-                if (isSecondary) {
-                    secondaryVoiceCalls++;
-                    secondaryVoiceSeconds += calculateDuration(call);
-                } else if (isUnknown) {
-                    unknownVoiceCalls++;
-                    unknownVoiceSeconds += calculateDuration(call);
-                } else if (isOwner) {
-                    ownerVoiceCalls++;
-                    ownerVoiceSeconds += calculateDuration(call);
-                } else {
-                    totalVoiceCalls++;
-                }
+            const aid = call.assistantId || '';
+            const isSecondary = aid === SEC_ASSISTANT;
+            const isUnknown = aid === UNKNOWN_ASSISTANT;
+            const isOwner = aid === OWNERS_ASSISTANT;
+            if (isSecondary) {
+                secondaryVoiceCalls++;
+                secondaryVoiceSeconds += calculateDuration(call);
+            } else if (isUnknown) {
+                unknownVoiceCalls++;
+                unknownVoiceSeconds += calculateDuration(call);
+            } else if (isOwner) {
+                ownerVoiceCalls++;
+                ownerVoiceSeconds += calculateDuration(call);
+            } else {
+                totalVoiceCalls++;
             }
             totalVoiceSeconds += calculateDuration(call);
         });

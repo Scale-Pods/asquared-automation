@@ -52,15 +52,22 @@ const DynamicRowCells = ({ call, telephonyCost }: { call: any, telephonyCost?: n
                     >
                         {realType}
                     </Badge>
-                    {call.vapiAccount === 'owners' && (
+                    {call.vapiAccount === 'secondary' && (
                         <div className="flex items-center gap-1 mt-0.5 px-1">
-                            <Crown className="h-2.5 w-2.5 text-amber-500" />
-                            <span className="text-[9px] font-bold text-amber-600 uppercase tracking-tighter">Owner Leads</span>
+                            <Phone className="h-2.5 w-2.5 text-indigo-500" />
+                            <span className="text-[9px] font-bold text-indigo-600 uppercase tracking-tighter">Secondary Leads</span>
                         </div>
                     )}
-                    {call.assistantId === '560ca61b-8cd3-4b5f-996b-2966abfa37fd' && (
-                        <div className="text-[8px] font-bold text-purple-600 uppercase tracking-tight mt-0.5 px-1">
-                            Secondary Reachout
+                    {call.vapiAccount === 'unknown' && (
+                        <div className="flex items-center gap-1 mt-0.5 px-1">
+                            <Crown className="h-2.5 w-2.5 text-amber-500" />
+                            <span className="text-[9px] font-bold text-amber-600 uppercase tracking-tighter">Unknown Leads</span>
+                        </div>
+                    )}
+                    {call.vapiAccount === 'owners' && (
+                        <div className="flex items-center gap-1 mt-0.5 px-1">
+                            <Crown className="h-2.5 w-2.5 text-blue-500" />
+                            <span className="text-[9px] font-bold text-blue-600 uppercase tracking-tighter">Owner Leads</span>
                         </div>
                     )}
 
@@ -195,7 +202,7 @@ export default function VoiceLogsPage() {
                 isInbound: c.isInbound,
                 country: c.country || 'Unknown',
                 source: 'vapi',
-                vapiAccount: c.vapiAccount || 'normal',
+                vapiAccount: c.vapiAccount || 'other',
                 vapiStatus: c.vapiStatus || '',
                 assistantId: c.assistantId || null,
                 breakdown: { agent: c.costUsd || 0, telephony: 0, total: c.costUsd || 0 },
@@ -365,8 +372,9 @@ export default function VoiceLogsPage() {
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem value="vapi">All Vapi Calls</SelectItem>
-                            <SelectItem value="vapi-owners">Owner Leads</SelectItem>
-                            <SelectItem value="vapi-normal">Normal Calls</SelectItem>
+                            <SelectItem value="secondary">Secondary Leads</SelectItem>
+                            <SelectItem value="unknown">Unknown Leads</SelectItem>
+                            <SelectItem value="owners">Owner Leads</SelectItem>
                         </SelectContent>
                     </Select>
 

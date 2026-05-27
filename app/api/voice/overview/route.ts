@@ -3,6 +3,36 @@ import { format, getHours } from 'date-fns';
 
 export const dynamic = 'force-dynamic';
 
+const SEC_ASSISTANT = 'c552e5b3-6c41-41d2-83b4-7c820e0d14bb';
+const UNKNOWN_ASSISTANT = '3266ea3f-336e-436a-bd2a-63f196aab37f';
+const OWNERS_ASSISTANT = '682cf6ae-23fd-44f3-a4a3-756998cd62c1';
+
+async function fetchTable(baseUrl: string, headers: Record<string, string>, table: string, columns: string, dateFilter: string, BATCH_SIZE = 1000) {
+    try {
+        const url = `${baseUrl}/${table}?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=0`;
+        const countRes = await fetch(url, { headers: { ...headers, 'Prefer': 'count=exact' }, cache: 'no-store' });
+        if (!countRes.ok) return [];
+        const firstBatch = await countRes.json();
+        if (!Array.isArray(firstBatch)) return [];
+
+        const cr = countRes.headers.get('content-range');
+        let totalCount = firstBatch.length;
+        if (cr) { const m = cr.match(/\/(\d+)$/); if (m) totalCount = parseInt(m[1], 10); }
+
+        if (firstBatch.length >= totalCount || firstBatch.length < BATCH_SIZE) return firstBatch;
+
+        const offsets: number[] = [];
+        for (let offset = BATCH_SIZE; offset < totalCount; offset += BATCH_SIZE) offsets.push(offset);
+
+        const batches = await Promise.all(offsets.map(offset =>
+            fetch(`${baseUrl}/${table}?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=${offset}`, { headers, cache: 'no-store' })
+                .then(r => r.ok ? r.json() : [])
+                .catch(() => [])
+        ));
+        return [...firstBatch, ...batches.flat()];
+    } catch { return []; }
+}
+
 export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');
@@ -22,67 +52,51 @@ export async function GET(req: Request) {
         "Content-Type": "application/json"
     };
 
-    const fetchCalls = async () => {
-        const columns = 'id,created_at,customer_phone,customer_name,duration_seconds,status,cost_usd,source,transcript,summary,recording_url,vapi_account,assistantId,type,voice_call_status';
-        const BATCH_SIZE = 1000;
+    const columns = 'id,created_at,customer_phone,customer_name,duration_seconds,status,cost_usd,source,transcript,summary,recording_url,vapi_account,assistantId,type,voice_call_status';
 
-        let dateFilter = '';
-        if (from) dateFilter += `&created_at=gte.${from}`;
-        if (to) {
-            const endDate = new Date(to);
-            if (endDate.getUTCHours() === 0 && endDate.getUTCMinutes() === 0 && endDate.getUTCSeconds() === 0) {
-                endDate.setUTCHours(23, 59, 59, 999);
-            }
-            dateFilter += `&created_at=lte.${endDate.toISOString()}`;
+    let dateFilter = '';
+    if (from) dateFilter += `&created_at=gte.${from}`;
+    if (to) {
+        const endDate = new Date(to);
+        if (endDate.getUTCHours() === 0 && endDate.getUTCMinutes() === 0 && endDate.getUTCSeconds() === 0) {
+            endDate.setUTCHours(23, 59, 59, 999);
         }
-
-        try {
-            const url = `${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=0`;
-            const countRes = await fetch(url, { headers: { ...headers, 'Prefer': 'count=exact' }, cache: 'no-store' });
-            if (!countRes.ok) return [];
-            const firstBatch = await countRes.json();
-            if (!Array.isArray(firstBatch)) return [];
-
-            const cr = countRes.headers.get('content-range');
-            let totalCount = firstBatch.length;
-            if (cr) { const m = cr.match(/\/(\d+)$/); if (m) totalCount = parseInt(m[1], 10); }
-
-            let allRows: any[];
-            if (firstBatch.length >= totalCount || firstBatch.length < BATCH_SIZE) {
-                allRows = firstBatch;
-            } else {
-                const offsets: number[] = [];
-                for (let offset = BATCH_SIZE; offset < totalCount; offset += BATCH_SIZE) offsets.push(offset);
-
-                const batches = await Promise.all(offsets.map(offset =>
-                    fetch(`${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=${offset}`, { headers, cache: 'no-store' })
-                        .then(r => r.ok ? r.json() : [])
-                        .catch(() => [])
-                ));
-                allRows = [...firstBatch, ...batches.flat()];
-            }
-            return allRows;
-        } catch { return []; }
-    };
+        dateFilter += `&created_at=lte.${endDate.toISOString()}`;
+    }
 
     try {
-        const rows = await fetchCalls();
+        const [ownerRows, nfRows] = await Promise.all([
+            fetchTable(baseUrl, headers, 'vapi_call_logs', columns, dateFilter),
+            fetchTable(baseUrl, headers, 'vapi_call_logs_nf', columns, dateFilter)
+        ]);
 
-        const calls = rows.map((d: any) => ({
-            id: d.id,
-            startedAt: d.created_at || d.started_at,
-            durationSeconds: d.duration_seconds || 0,
-            costValue: d.cost_usd ?? 0,
-            status: (d.status || '').toLowerCase(),
-            isInbound: d.type === 'inboundPhoneCall',
-            vapiAccount: (d.assistantId || '') === '682cf6ae-23fd-44f3-a4a3-756998cd62c1' ? 'owners' : 'normal',
-            voiceCallStatus: d.voice_call_status || ''
-        }));
+        const allRows = [...ownerRows, ...nfRows];
+
+        const calls = allRows.map((d: any) => {
+            const aid = d.assistantId || '';
+            let account: string;
+            if (aid === SEC_ASSISTANT) account = 'secondary';
+            else if (aid === UNKNOWN_ASSISTANT) account = 'unknown';
+            else if (aid === OWNERS_ASSISTANT) account = 'owners';
+            else account = 'normal';
+
+            return {
+                id: d.id,
+                startedAt: d.created_at || d.started_at,
+                durationSeconds: d.duration_seconds || 0,
+                costValue: d.cost_usd ?? 0,
+                status: (d.status || '').toLowerCase(),
+                isInbound: d.type === 'inboundPhoneCall',
+                vapiAccount: account,
+                voiceCallStatus: d.voice_call_status || ''
+            };
+        });
 
         const totalCalls = calls.length;
         let totalDuration = 0, totalCost = 0, successCount = 0;
-        let normalCallsCount = 0, ownersCallsCount = 0;
-        let normalPickedUp = 0, normalCompleted = 0;
+        let secondaryCallsCount = 0, unknownCallsCount = 0, ownersCallsCount = 0;
+        let secondaryPickedUp = 0, secondaryCompleted = 0;
+        let unknownPickedUp = 0, unknownCompleted = 0;
         let ownerPickedUp = 0, ownerCompleted = 0;
 
         const dayMap = new Map<string, { calls: number; credits: number; display: string }>();
@@ -93,11 +107,13 @@ export async function GET(req: Request) {
         calls.forEach(call => {
             const dur = call.durationSeconds;
             const cost = call.costValue;
+            const isSecondary = call.vapiAccount === 'secondary';
+            const isUnknown = call.vapiAccount === 'unknown';
             const isOwner = call.vapiAccount === 'owners';
-            const isNormal = call.vapiAccount === 'normal' || !call.vapiAccount;
 
-            if (isOwner) ownersCallsCount++;
-            else if (isNormal) normalCallsCount++;
+            if (isSecondary) secondaryCallsCount++;
+            else if (isUnknown) unknownCallsCount++;
+            else if (isOwner) ownersCallsCount++;
 
             totalDuration += dur;
             totalCost += cost;
@@ -123,17 +139,18 @@ export async function GET(req: Request) {
             else if (dur < 300) durationBuckets['2m-5m']++;
             else durationBuckets['5m+']++;
 
-            // Pick-up: duration_seconds > 18
             const pickedUp = dur > 18;
-            // Completion: status is customer-ended-call or assistant-ended-call
             const completed = call.status === 'customer-ended-call' || call.status === 'assistant-ended-call';
 
-            if (isOwner) {
+            if (isSecondary) {
+                if (pickedUp) secondaryPickedUp++;
+                if (completed) secondaryCompleted++;
+            } else if (isUnknown) {
+                if (pickedUp) unknownPickedUp++;
+                if (completed) unknownCompleted++;
+            } else if (isOwner) {
                 if (pickedUp) ownerPickedUp++;
                 if (completed) ownerCompleted++;
-            } else if (isNormal) {
-                if (pickedUp) normalPickedUp++;
-                if (completed) normalCompleted++;
             }
         });
 
@@ -173,10 +190,13 @@ export async function GET(req: Request) {
             totalDuration,
             totalCost,
             avgDuration: totalCalls > 0 ? totalDuration / totalCalls : 0,
-            normalCalls: normalCallsCount,
+            secondaryCalls: secondaryCallsCount,
+            unknownCalls: unknownCallsCount,
             ownersCalls: ownersCallsCount,
-            pickupRate: normalCallsCount > 0 ? (normalPickedUp / normalCallsCount) * 100 : 0,
-            completionRate: normalCallsCount > 0 ? (normalCompleted / normalCallsCount) * 100 : 0,
+            pickupRate: secondaryCallsCount > 0 ? (secondaryPickedUp / secondaryCallsCount) * 100 : 0,
+            completionRate: secondaryCallsCount > 0 ? (secondaryCompleted / secondaryCallsCount) * 100 : 0,
+            unknownPickupRate: unknownCallsCount > 0 ? (unknownPickedUp / unknownCallsCount) * 100 : 0,
+            unknownCompletionRate: unknownCallsCount > 0 ? (unknownCompleted / unknownCallsCount) * 100 : 0,
             ownerPickupRate: ownersCallsCount > 0 ? (ownerPickedUp / ownersCallsCount) * 100 : 0,
             ownerCompletionRate: ownersCallsCount > 0 ? (ownerCompleted / ownersCallsCount) * 100 : 0,
             hourlyData,

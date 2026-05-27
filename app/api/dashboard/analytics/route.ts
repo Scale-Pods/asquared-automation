@@ -176,7 +176,8 @@ export async function GET(req: Request) {
             introUkRows,
             followUpRows,
             followUpUkRows,
-            allCalls
+            allCallsRaw,
+            allCallsNf
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", null, null, null),
             fetchAllRows(baseUrl, headers, "master_leads", null, null, null),
@@ -184,8 +185,11 @@ export async function GET(req: Request) {
             fetchAllRowsWithDateParts(baseUrl, headers, "intro_uk", "WP_last_contacted", null, null),
             fetchAllRowsWithDateParts(baseUrl, headers, "follow_up", "WP_last_contacted", null, null),
             fetchAllRowsWithDateParts(baseUrl, headers, "follow_up_uk", "WP_last_contacted", null, null),
-            fetchAllRowsWithDateParts(baseUrl, headers, "vapi_call_logs", "created_at", from, to)
+            fetchAllRowsWithDateParts(baseUrl, headers, "vapi_call_logs", "created_at", from, to),
+            fetchAllRowsWithDateParts(baseUrl, headers, "vapi_call_logs_nf", "created_at", from, to)
         ]);
+
+        const allCalls = [...allCallsRaw, ...allCallsNf];
 
         // Combine all normal leads
         const allLeads = [...leadsRows, ...introRows, ...introUkRows, ...followUpRows, ...followUpUkRows];
@@ -307,15 +311,31 @@ export async function GET(req: Request) {
         });
 
         // --- Voice Calls ---
+        const SEC_ASSISTANT = 'c552e5b3-6c41-41d2-83b4-7c820e0d14bb';
+        const UNKNOWN_ASSISTANT = '3266ea3f-336e-436a-bd2a-63f196aab37f';
+        const OWNERS_ASSISTANT = '682cf6ae-23fd-44f3-a4a3-756998cd62c1';
         let totalVoiceCalls = 0;
+        let secondaryVoiceCalls = 0;
+        let unknownVoiceCalls = 0;
         let ownerVoiceCalls = 0;
         let totalVoiceSeconds = 0;
+        let secondaryVoiceSeconds = 0;
+        let unknownVoiceSeconds = 0;
         let ownerVoiceSeconds = 0;
         allCalls.forEach((call: any) => {
             if (!isWithinRange(new Date(call.created_at || 0), fromDate, toDate)) return;
             if (call.source === 'vapi') {
-                const isOwner = call.vapi_account === 'owners';
-                if (isOwner) {
+                const aid = call.assistantId || '';
+                const isSecondary = aid === SEC_ASSISTANT;
+                const isUnknown = aid === UNKNOWN_ASSISTANT;
+                const isOwner = aid === OWNERS_ASSISTANT;
+                if (isSecondary) {
+                    secondaryVoiceCalls++;
+                    secondaryVoiceSeconds += calculateDuration(call);
+                } else if (isUnknown) {
+                    unknownVoiceCalls++;
+                    unknownVoiceSeconds += calculateDuration(call);
+                } else if (isOwner) {
                     ownerVoiceCalls++;
                     ownerVoiceSeconds += calculateDuration(call);
                 } else {
@@ -324,9 +344,6 @@ export async function GET(req: Request) {
             }
             totalVoiceSeconds += calculateDuration(call);
         });
-        const voiceMinutesString = formatDuration(totalVoiceSeconds);
-        const ownerVoiceDurationString = formatDuration(ownerVoiceSeconds);
-
         // --- Owner Stats (from master_leads, filtered by created_at with fallback to Last Contacted) ---
         const masterLeadsFiltered = masterLeads.filter((o: any) => {
             const d = new Date(o.created_at || o["Last Contacted"] || 0);
@@ -353,17 +370,25 @@ export async function GET(req: Request) {
         const formatLabel = (d: Date | null) => d ? `Since ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : "Real-time";
         const ownerLeadsSince = totalOwnerLeads > 0 ? "Real-time" : "Real-time";
         const ownerWhatsappSince = formatLabel(minOwnerWPDate);
-        const ownerVoiceSince = ownerVoiceCalls > 0 ? ownerVoiceDurationString : "No calls";
         const ownerRepliesSince = ownerTotalReplies > 0 ? "Real-time" : "Real-time";
+
+        const voiceMinutesString = formatDuration(totalVoiceSeconds);
+        const secondaryVoiceDurationString = formatDuration(secondaryVoiceSeconds);
+        const unknownVoiceDurationString = formatDuration(unknownVoiceSeconds);
+        const ownerVoiceDurationString = formatDuration(ownerVoiceSeconds);
 
         const response = {
             normalLeadsCount,
             emailCount,
             whatsappReachouts,
             totalVoiceCalls,
+            secondaryVoiceCalls,
+            unknownVoiceCalls,
             ownerVoiceCalls,
             totalVoiceSeconds,
             voiceMinutesString,
+            secondaryVoiceDurationString,
+            unknownVoiceDurationString,
             ownerVoiceDurationString,
             totalReplies,
             totalOwnerLeads,
@@ -374,7 +399,6 @@ export async function GET(req: Request) {
             oldestWPDate,
             ownerLeadsSince,
             ownerWhatsappSince,
-            ownerVoiceSince,
             ownerRepliesSince,
             acquisitionChartData,
             replyLeads,

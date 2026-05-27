@@ -3,6 +3,36 @@ import { fetchAllRows } from '@/lib/server-parsers';
 
 export const dynamic = 'force-dynamic';
 
+const SEC_ASSISTANT = 'c552e5b3-6c41-41d2-83b4-7c820e0d14bb';
+const UNKNOWN_ASSISTANT = '3266ea3f-336e-436a-bd2a-63f196aab37f';
+const OWNERS_ASSISTANT = '682cf6ae-23fd-44f3-a4a3-756998cd62c1';
+
+async function fetchTable(baseUrl: string, headers: Record<string, string>, table: string, columns: string, dateFilter: string, BATCH_SIZE = 1000) {
+    try {
+        const url = `${baseUrl}/${table}?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=0`;
+        const countRes = await fetch(url, { headers: { ...headers, 'Prefer': 'count=exact' }, cache: 'no-store' });
+        if (!countRes.ok) return [];
+        const firstBatch = await countRes.json();
+        if (!Array.isArray(firstBatch)) return [];
+
+        const cr = countRes.headers.get('content-range');
+        let totalCount = firstBatch.length;
+        if (cr) { const m = cr.match(/\/(\d+)$/); if (m) totalCount = parseInt(m[1], 10); }
+
+        if (firstBatch.length >= totalCount || firstBatch.length < BATCH_SIZE) return firstBatch;
+
+        const offsets: number[] = [];
+        for (let offset = BATCH_SIZE; offset < totalCount; offset += BATCH_SIZE) offsets.push(offset);
+
+        const batches = await Promise.all(offsets.map(offset =>
+            fetch(`${baseUrl}/${table}?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=${offset}`, { headers, cache: 'no-store' })
+                .then(r => r.ok ? r.json() : [])
+                .catch(() => [])
+        ));
+        return [...firstBatch, ...batches.flat()];
+    } catch { return []; }
+}
+
 export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');
@@ -61,48 +91,17 @@ export async function GET(req: Request) {
         return 'Unknown';
     }
 
-    const fetchCalls = async () => {
-        const columns = 'id,created_at,customer_phone,customer_name,duration_seconds,status,cost_usd,source,transcript,summary,recording_url,vapi_account,assistantId,type,voice_call_status,note';
-        const BATCH_SIZE = 1000;
+    const columns = 'id,created_at,customer_phone,customer_name,duration_seconds,status,cost_usd,source,transcript,summary,recording_url,vapi_account,assistantId,type,voice_call_status,note';
 
-        let dateFilter = '';
-        if (from) dateFilter += `&created_at=gte.${from}`;
-        if (to) {
-            const endDate = new Date(to);
-            if (endDate.getUTCHours() === 0 && endDate.getUTCMinutes() === 0 && endDate.getUTCSeconds() === 0) {
-                endDate.setUTCHours(23, 59, 59, 999);
-            }
-            dateFilter += `&created_at=lte.${endDate.toISOString()}`;
+    let dateFilter = '';
+    if (from) dateFilter += `&created_at=gte.${from}`;
+    if (to) {
+        const endDate = new Date(to);
+        if (endDate.getUTCHours() === 0 && endDate.getUTCMinutes() === 0 && endDate.getUTCSeconds() === 0) {
+            endDate.setUTCHours(23, 59, 59, 999);
         }
-
-        try {
-            const url = `${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=0`;
-            const countRes = await fetch(url, { headers: { ...headers, 'Prefer': 'count=exact' }, cache: 'no-store' });
-            if (!countRes.ok) return [];
-            const firstBatch = await countRes.json();
-            if (!Array.isArray(firstBatch)) return [];
-
-            const cr = countRes.headers.get('content-range');
-            let totalCount = firstBatch.length;
-            if (cr) { const m = cr.match(/\/(\d+)$/); if (m) totalCount = parseInt(m[1], 10); }
-
-            let allRows: any[];
-            if (firstBatch.length >= totalCount || firstBatch.length < BATCH_SIZE) {
-                allRows = firstBatch;
-            } else {
-                const offsets: number[] = [];
-                for (let offset = BATCH_SIZE; offset < totalCount; offset += BATCH_SIZE) offsets.push(offset);
-
-                const batches = await Promise.all(offsets.map(offset =>
-                    fetch(`${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=${offset}`, { headers, cache: 'no-store' })
-                        .then(r => r.ok ? r.json() : [])
-                        .catch(() => [])
-                ));
-                allRows = [...firstBatch, ...batches.flat()];
-            }
-            return allRows;
-        } catch { return []; }
-    };
+        dateFilter += `&created_at=lte.${endDate.toISOString()}`;
+    }
 
     const buildPhoneMap = async () => {
         const phoneMap = new Map<string, { name: string; voice_call_status?: string; note?: string }>();
@@ -129,10 +128,13 @@ export async function GET(req: Request) {
     };
 
     try {
-        const [rows, phoneMap] = await Promise.all([
-            fetchCalls(),
+        const [ownerRows, nfRows, phoneMap] = await Promise.all([
+            fetchTable(baseUrl, headers, 'vapi_call_logs', columns, dateFilter),
+            fetchTable(baseUrl, headers, 'vapi_call_logs_nf', columns, dateFilter),
             buildPhoneMap()
         ]);
+
+        const allRows = [...ownerRows, ...nfRows];
 
         const normalizeRow = (d: any) => {
             const ph = d.customer_phone || 'Unknown';
@@ -145,6 +147,12 @@ export async function GET(req: Request) {
                 customerName = leadInfo.name;
             }
 
+            let account: string;
+            if ((aid || '') === SEC_ASSISTANT) account = 'secondary';
+            else if ((aid || '') === UNKNOWN_ASSISTANT) account = 'unknown';
+            else if ((aid || '') === OWNERS_ASSISTANT) account = 'owners';
+            else account = 'normal';
+
             return {
                 id: d.id,
                 startedAt: d.created_at || d.started_at,
@@ -154,7 +162,7 @@ export async function GET(req: Request) {
                 costUsd: d.cost_usd ?? 0,
                 source: 'vapi',
                 isInbound: d.type === 'inboundPhoneCall',
-                vapiAccount: (aid || '') === '682cf6ae-23fd-44f3-a4a3-756998cd62c1' ? 'owners' : 'normal',
+                vapiAccount: account,
                 status: (d.status || '').toLowerCase(),
                 transcript: d.transcript || '',
                 summary: d.summary || '',
@@ -167,10 +175,12 @@ export async function GET(req: Request) {
             };
         };
 
-        let calls = rows.map(normalizeRow);
+        let calls = allRows.map(normalizeRow);
 
-        if (account === 'normal') calls = calls.filter(c => c.vapiAccount !== 'owners');
+        if (account === 'secondary') calls = calls.filter(c => c.vapiAccount === 'secondary');
+        else if (account === 'unknown') calls = calls.filter(c => c.vapiAccount === 'unknown');
         else if (account === 'owners') calls = calls.filter(c => c.vapiAccount === 'owners');
+        else if (account === 'normal') calls = calls.filter(c => c.vapiAccount === 'normal');
 
         if (statusFilter !== 'all') {
             calls = calls.filter(c => c.status === statusFilter);

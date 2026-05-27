@@ -121,11 +121,15 @@ export async function GET(
         }
 
 
-        // LAST RESORT: Check Supabase Archived Logs
+        // LAST RESORT: Check Supabase Archived Logs (try both tables)
         if (supabaseUrl && secretKey) {
             try {
                 const headers = { "apikey": secretKey, "Authorization": `Bearer ${secretKey}` };
-                const res = await fetch(`${supabaseUrl.replace(/\/$/, "")}/rest/v1/vapi_call_logs?id=eq.${id}&select=*`, { headers });
+                const baseRestUrl = `${supabaseUrl.replace(/\/$/, "")}/rest/v1`;
+                let res = await fetch(`${baseRestUrl}/vapi_call_logs_nf?id=eq.${id}&select=*`, { headers });
+                if (!res.ok || !(await res.clone().json())[0]) {
+                    res = await fetch(`${baseRestUrl}/vapi_call_logs?id=eq.${id}&select=*`, { headers });
+                }
                 if (res.ok) {
                     const data = await res.json();
                     if (data && data[0]) {

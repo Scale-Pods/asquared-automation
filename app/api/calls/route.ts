@@ -3,7 +3,9 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 import crypto from 'crypto';
 
-
+const SEC_ASSISTANT = 'c552e5b3-6c41-41d2-83b4-7c820e0d14bb';
+const UNKNOWN_ASSISTANT = '3266ea3f-336e-436a-bd2a-63f196aab37f';
+const OWNERS_ASSISTANT = '682cf6ae-23fd-44f3-a4a3-756998cd62c1';
 
 // --- Helper: Timeout Signal ---
 function getTimeoutSignal(ms: number) {
@@ -15,8 +17,6 @@ function getTimeoutSignal(ms: number) {
     return controller.signal;
 }
 
-// --- Helper: Timeout Signal ---
-
 // --- Helper: Number Normalization ---
 function cleanPhoneNumber(num: any): string {
     if (!num) return "Unknown";
@@ -25,11 +25,10 @@ function cleanPhoneNumber(num: any): string {
     return str;
 }
 
-// --- Rate Lookup (Removed rates.json) ---
+// --- Rate Lookup ---
 function getRateInfo(phoneNumber: string) {
-    return { Country: 'UAE', Rate: 0.05 }; // Placeholder fallback
+    return { Country: 'UAE', Rate: 0.05 };
 }
-
 
 function calculateTelephonyCost(durationSecs: number, phoneNumber: string, isInbound: boolean, providerNumber?: string) {
     if (isInbound) return durationSecs > 0 ? 0.02 : 0;
@@ -55,13 +54,37 @@ function calculateTelephonyCost(durationSecs: number, phoneNumber: string, isInb
     return (durationSecs / 60) * (rate?.Rate ?? 0);
 }
 
+async function fetchTable(baseUrl: string, headers: Record<string, string>, table: string, columns: string, dateFilter: string, BATCH_SIZE = 1000) {
+    try {
+        const url = `${baseUrl}/${table}?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=0`;
+        const countRes = await fetch(url, { headers: { ...headers, 'Prefer': 'count=exact' }, cache: 'no-store' });
+        if (!countRes.ok) return [];
+        const firstBatch = await countRes.json();
+        if (!Array.isArray(firstBatch)) return [];
 
+        const cr = countRes.headers.get('content-range');
+        let totalCount = firstBatch.length;
+        if (cr) { const m = cr.match(/\/(\d+)$/); if (m) totalCount = parseInt(m[1], 10); }
+
+        if (firstBatch.length >= totalCount || firstBatch.length < BATCH_SIZE) return firstBatch;
+
+        const offsets: number[] = [];
+        for (let offset = BATCH_SIZE; offset < totalCount; offset += BATCH_SIZE) offsets.push(offset);
+
+        const batches = await Promise.all(offsets.map(offset =>
+            fetch(`${baseUrl}/${table}?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=${offset}`, { headers, cache: 'no-store' })
+                .then(r => r.ok ? r.json() : [])
+                .catch(() => [])
+        ));
+        return [...firstBatch, ...batches.flat()];
+    } catch { return []; }
+}
 
 /**
- * Fetches call logs strictly from Supabase archive.
- * Data is synced to this table via an external n8n workflow.
+ * Fetches call logs from both Supabase tables and merges.
+ * Owners data from vapi_call_logs, secondary/unknown from vapi_call_logs_nf.
  */
-async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null): Promise<any[]> {
+async function fetchAllCallLogs(fromDate: Date | null, toDate: Date | null): Promise<any[]> {
     const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
     const secretKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
     if (!supabaseUrl || !secretKey) return [];
@@ -69,13 +92,8 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
     const baseUrl = `${supabaseUrl.replace(/\/$/, "")}/rest/v1`;
     const headers = { "apikey": secretKey, "Authorization": `Bearer ${secretKey}` };
 
-    // Lean column selection for list view
-    // Fetch specific columns based on schema. User added assistantId and type columns.
     const columns = 'id,created_at,customer_phone,customer_name,duration_seconds,status,cost_usd,source,transcript,summary,recording_url,vapi_account,assistantId,type';
 
-    const BATCH_SIZE = 1000;
-
-    // Build date filter
     let dateFilter = '';
     if (fromDate) dateFilter += `&created_at=gte.${fromDate.toISOString()}`;
     if (toDate) {
@@ -86,6 +104,12 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
         dateFilter += `&created_at=lte.${endOfRange.toISOString()}`;
     }
 
+    const [ownerRows, nfRows] = await Promise.all([
+        fetchTable(baseUrl, headers, 'vapi_call_logs', columns, dateFilter),
+        fetchTable(baseUrl, headers, 'vapi_call_logs_nf', columns, dateFilter)
+    ]);
+
+    const allRows = [...ownerRows, ...nfRows];
 
     const normalizeRow = (d: any) => {
         const dur = d.duration_seconds || 0;
@@ -95,9 +119,8 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
         const aid = d.assistantId || null;
         const UAE_BOT_ID = '70f05e16-18f3-4f6e-964a-f47b299c6c1d';
 
-        // Mapping rules for call type
         let isInbound = d.type === 'inboundPhoneCall';
-        if (aid === UAE_BOT_ID) isInbound = false; // UAE bot is always outbound (Telephony)
+        if (aid === UAE_BOT_ID) isInbound = false;
 
         const assistantIdToPhone: Record<string, string> = {
             '70f05e16-18f3-4f6e-964a-f47b299c6c1d': '97148714150',
@@ -107,6 +130,12 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
         };
 
         const assistantPhone = (aid ? assistantIdToPhone[aid] : null) || 'Unknown';
+
+        let account: string;
+        if (aid === SEC_ASSISTANT) account = 'secondary';
+        else if (aid === UNKNOWN_ASSISTANT) account = 'unknown';
+        else if (aid === OWNERS_ASSISTANT) account = 'owners';
+        else account = 'normal';
 
         return {
             id: d.id,
@@ -121,7 +150,6 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
             callSummary: d.summary || '',
             transcript: d.transcript || '',
             recordingUrl: d.recording_url || '',
-            // Map various Vapi success statuses to 'answered' for the dashboard filter
             status: (d.status === 'ended' || d.status === 'customer-ended-call' || d.status === 'assistant-ended-call' || d.status === 'voicemail')
                 ? 'answered'
                 : (d.status || 'answered'),
@@ -129,7 +157,7 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
             isInbound,
             country: getRateInfo(ph)?.Country || 'Unknown',
             source: 'vapi',
-            vapiAccount: aid === '682cf6ae-23fd-44f3-a4a3-756998cd62c1' ? 'owners' : 'normal',
+            vapiAccount: account,
             vapiStatus: d.status,
 
             assistantId: aid,
@@ -139,44 +167,7 @@ async function fetchArchivedCallLogs(fromDate: Date | null, toDate: Date | null)
         };
     };
 
-    try {
-        const countUrl = `${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=0`;
-
-        const countRes = await fetch(countUrl, { headers: { ...headers, 'Prefer': 'count=exact' } });
-
-        if (!countRes.ok) return [];
-
-        const firstBatch = await countRes.json();
-        if (!Array.isArray(firstBatch)) return [];
-
-        const contentRange = countRes.headers.get('content-range');
-        let totalCount = firstBatch.length;
-        if (contentRange) {
-            const match = contentRange.match(/\/(\d+)$/);
-            if (match) totalCount = parseInt(match[1], 10);
-        }
-
-        if (firstBatch.length >= totalCount || firstBatch.length < BATCH_SIZE) {
-            return firstBatch.map(normalizeRow);
-        }
-
-        const remainingBatches: Promise<any[]>[] = [];
-        for (let offset = BATCH_SIZE; offset < totalCount; offset += BATCH_SIZE) {
-            const batchUrl = `${baseUrl}/vapi_call_logs?select=${columns}${dateFilter}&order=created_at.desc&limit=${BATCH_SIZE}&offset=${offset}`;
-            remainingBatches.push(
-                fetch(batchUrl, { headers })
-                    .then(r => r.ok ? r.json() : [])
-                    .catch(() => [])
-            );
-        }
-
-        const batchResults = await Promise.all(remainingBatches);
-        const allRows = [...firstBatch, ...batchResults.flat()];
-        return allRows.map(normalizeRow);
-    } catch (e) {
-        console.error("[SupabaseFetch] Error:", e);
-        return [];
-    }
+    return allRows.map(normalizeRow);
 }
 
 export async function GET(req: Request) {
@@ -191,10 +182,8 @@ export async function GET(req: Request) {
         const fromDate = fromDateRaw && !isNaN(fromDateRaw.getTime()) ? fromDateRaw : null;
         const toDate = toDateRaw && !isNaN(toDateRaw.getTime()) ? toDateRaw : null;
 
-        // Fetch exclusively from Supabase Archive
-        const archivedCalls = await fetchArchivedCallLogs(fromDate, toDate);
+        const archivedCalls = await fetchAllCallLogs(fromDate, toDate);
 
-        // Sort by date descending
         const final = archivedCalls
             .sort((a, b) => {
                 const timeA = a.startedAt ? new Date(a.startedAt).getTime() : 0;
@@ -215,5 +204,3 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: "Fetch failed" }, { status: 500 });
     }
 }
-
-

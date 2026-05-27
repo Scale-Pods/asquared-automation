@@ -46,8 +46,11 @@ export default function VoiceAnalyticsPage() {
         outboundDuration: 0,
         pickupRate: 0,
         completionRate: 0,
-        normalCalls: 0,
+        secondaryCalls: 0,
+        unknownCalls: 0,
         ownersCalls: 0,
+        unknownPickupRate: 0,
+        unknownCompletionRate: 0,
         ownerPickupRate: 0,
         ownerCompletionRate: 0,
         waitingAvailabilityCount: 0,
@@ -66,7 +69,7 @@ export default function VoiceAnalyticsPage() {
         const q = new URLSearchParams({
             from: new Date(dateRange.from).toISOString(),
             to: new Date(dateRange.to || dateRange.from).toISOString(),
-            account: accountFilter === 'vapi' ? 'all' : accountFilter === 'vapi-normal' ? 'normal' : 'owners'
+            account: accountFilter === 'vapi' ? 'all' : accountFilter
         });
 
         fetch(`/api/calls/stats?${q}`)
@@ -83,8 +86,11 @@ export default function VoiceAnalyticsPage() {
                     outboundDuration: data.outboundDuration,
                     pickupRate: data.pickupRate,
                     completionRate: data.completionRate,
-                    normalCalls: data.normalCalls,
+                    secondaryCalls: data.secondaryCalls,
+                    unknownCalls: data.unknownCalls,
                     ownersCalls: data.ownersCalls,
+                    unknownPickupRate: data.unknownPickupRate,
+                    unknownCompletionRate: data.unknownCompletionRate,
                     ownerPickupRate: data.ownerPickupRate,
                     ownerCompletionRate: data.ownerCompletionRate,
                     waitingAvailabilityCount: data.waitingAvailabilityCount,
@@ -114,8 +120,9 @@ export default function VoiceAnalyticsPage() {
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem value="vapi">All Vapi Calls</SelectItem>
-                            <SelectItem value="vapi-owners">Owner Leads</SelectItem>
-                            <SelectItem value="vapi-normal">Normal Calls</SelectItem>
+                            <SelectItem value="secondary">Secondary Leads</SelectItem>
+                            <SelectItem value="unknown">Unknown Leads</SelectItem>
+                            <SelectItem value="owners">Owner Leads</SelectItem>
                         </SelectContent>
                     </Select>
                     <DateRangePicker onUpdate={(values) => setDateRange(values.range)} />
@@ -123,26 +130,20 @@ export default function VoiceAnalyticsPage() {
             </div>
 
 
-            {/* Key Metric Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <StatCard title="Total Normal Calls" value={allTimeVoiceCount.toLocaleString()} change="All Time" icon={<Phone className="h-5 w-5" />} color="text-blue-600" bg="bg-blue-50" />
-                <StatCard title="Total Owner Calls" value={allTimeOwnerVoiceCount.toLocaleString()} change="All Time" icon={<Crown className="h-5 w-5" />} color="text-amber-600" bg="bg-amber-50" />
-            </div>
-
-            {/* AI Voice Call Funnel */}
+            {/* Secondary Leads Analytics */}
             <div>
                 <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <span className="p-1.5 bg-blue-600 rounded-lg"><PhoneIncoming className="h-4 w-4 text-white" /></span>
-                    Normal Calls Analytics 
+                    <span className="p-1.5 bg-indigo-600 rounded-lg"><PhoneIncoming className="h-4 w-4 text-white" /></span>
+                    Secondary Leads Analytics 
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <StatCard
                         title="Calls in Range"
-                        value={stats.normalCalls.toLocaleString()}
+                        value={stats.secondaryCalls.toLocaleString()}
                         change="Selected Dates"
                         icon={<Phone className="h-5 w-5" />}
-                        color="text-blue-600"
-                        bg="bg-blue-50"
+                        color="text-indigo-600"
+                        bg="bg-indigo-50"
                     />
                     <StatCard
                         title="Call Pick-up Rate"
@@ -162,16 +163,16 @@ export default function VoiceAnalyticsPage() {
                     />
                 </div>
             </div>
-            {/* Owner Data Analytics */}
+            {/* Unknown Leads Analytics */}
             <div>
                 <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
                     <span className="p-1.5 bg-amber-600 rounded-lg"><Crown className="h-4 w-4 text-white" /></span>
-                    Owner Data Analytics
+                    Unknown Leads Analytics
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <StatCard
                         title="Calls in Range"
-                        value={stats.ownersCalls.toLocaleString()}
+                        value={stats.unknownCalls.toLocaleString()}
                         change="Selected Dates"
                         icon={<Crown className="h-5 w-5" />}
                         color="text-amber-600"
@@ -179,11 +180,53 @@ export default function VoiceAnalyticsPage() {
                     />
                     <StatCard
                         title="Call Pick-up Rate"
-                        value={`${stats.ownerPickupRate.toFixed(1)}%`}
+                        value={`${stats.unknownPickupRate.toFixed(1)}%`}
                         change="Picked & duration > 18 sec"
                         icon={<Phone className="h-5 w-5" />}
                         color="text-amber-600"
                         bg="bg-amber-50"
+                    />
+                    <StatCard
+                        title="Call Completion Rate"
+                        value={`${stats.unknownCompletionRate.toFixed(1)}%`}
+                        change="Completed Conversation"
+                        icon={<CheckCircle className="h-5 w-5" />}
+                        color="text-emerald-600"
+                        bg="bg-emerald-50"
+                    />
+                    <StatCard
+                        title="Awaiting Availability"
+                        value={`${stats.unknownCalls > 0 ? ((stats.waitingAvailabilityCount / stats.unknownCalls) * 100).toFixed(1) : 0}%`}
+                        change={`${stats.waitingAvailabilityCount.toLocaleString()} / ${stats.unknownCalls.toLocaleString()} calls`}
+                        icon={<CheckCircle className="h-5 w-5" />}
+                        color="text-blue-600"
+                        bg="bg-blue-50"
+                    />
+                </div>
+            </div>
+
+            {/* Owner Leads Analytics */}
+            <div>
+                <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                    <span className="p-1.5 bg-blue-600 rounded-lg"><Crown className="h-4 w-4 text-white" /></span>
+                    Owner Leads Analytics
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <StatCard
+                        title="Calls in Range"
+                        value={stats.ownersCalls.toLocaleString()}
+                        change="Selected Dates"
+                        icon={<Crown className="h-5 w-5" />}
+                        color="text-blue-600"
+                        bg="bg-blue-50"
+                    />
+                    <StatCard
+                        title="Call Pick-up Rate"
+                        value={`${stats.ownerPickupRate.toFixed(1)}%`}
+                        change="Picked & duration > 18 sec"
+                        icon={<Phone className="h-5 w-5" />}
+                        color="text-blue-600"
+                        bg="bg-blue-50"
                     />
                     <StatCard
                         title="Call Completion Rate"

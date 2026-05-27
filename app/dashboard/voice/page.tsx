@@ -28,7 +28,8 @@ export default function VoiceDashboardPage() {
         totalCalls: 0,
         totalDuration: 0,
         avgDuration: 0,
-        normalCalls: 0,
+        secondaryCalls: 0,
+        unknownCalls: 0,
         ownersCalls: 0,
     });
     const [dailyVolume, setDailyVolume] = useState<any[]>([]);
@@ -49,7 +50,8 @@ export default function VoiceDashboardPage() {
                 totalCalls: data.totalCalls || 0,
                 totalDuration: data.totalDuration || 0,
                 avgDuration: data.avgDuration || 0,
-                normalCalls: data.normalCalls || 0,
+                secondaryCalls: data.secondaryCalls || 0,
+                unknownCalls: data.unknownCalls || 0,
                 ownersCalls: data.ownersCalls || 0,
             });
             setDailyVolume((data.volumeData || []).map((d: any) => ({ name: d.name, calls: d.value })));
@@ -111,14 +113,14 @@ export default function VoiceDashboardPage() {
 
             {/* Vapi Account Split Banner */}
             {providerFilter === 'vapi' && !loading && (
-                <div className="grid grid-cols-2 gap-3">
-                    <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-2">
-                        <div className="p-1.5 bg-blue-100 rounded-lg">
-                            <Phone className="h-4 w-4 text-blue-600" />
+                <div className="grid grid-cols-3 gap-3">
+                    <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2">
+                        <div className="p-1.5 bg-indigo-100 rounded-lg">
+                            <Phone className="h-4 w-4 text-indigo-600" />
                         </div>
                         <div>
-                            <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wider">Normal Calls</p>
-                            <p className="text-xl font-bold text-blue-700">{stats.normalCalls.toLocaleString()}</p>
+                            <p className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wider">Secondary Leads</p>
+                            <p className="text-xl font-bold text-indigo-700">{stats.secondaryCalls.toLocaleString()}</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-2">
@@ -126,8 +128,17 @@ export default function VoiceDashboardPage() {
                             <Crown className="h-4 w-4 text-amber-600" />
                         </div>
                         <div>
-                            <p className="text-[10px] font-semibold text-amber-500 uppercase tracking-wider">Owner Leads</p>
-                            <p className="text-xl font-bold text-amber-700">{stats.ownersCalls.toLocaleString()}</p>
+                            <p className="text-[10px] font-semibold text-amber-500 uppercase tracking-wider">Unknown Leads</p>
+                            <p className="text-xl font-bold text-amber-700">{stats.unknownCalls.toLocaleString()}</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-2">
+                        <div className="p-1.5 bg-blue-100 rounded-lg">
+                            <Crown className="h-4 w-4 text-blue-600" />
+                        </div>
+                        <div>
+                            <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wider">Owner Leads</p>
+                            <p className="text-xl font-bold text-blue-700">{stats.ownersCalls.toLocaleString()}</p>
                         </div>
                     </div>
                 </div>

@@ -33,8 +33,8 @@ export async function GET(req: Request) {
     const fetchTableData = async (tableName: string, dateColumn?: string) => {
         const buildUrl = (offset: number, limit: number) => {
             let url = `${baseUrl}/${tableName}?select=*&offset=${offset}&limit=${limit}`;
-            if (dateColumn && from) url += `&"${dateColumn}"=gte.${from}`;
-            if (dateColumn && to) url += `&"${dateColumn}"=lte.${to}`;
+            if (dateColumn && from) url += `&%22${dateColumn}%22=gte.${from}`;
+            if (dateColumn && to) url += `&%22${dateColumn}%22=lte.${to}`;
             return url;
         };
 
@@ -133,13 +133,36 @@ export async function GET(req: Request) {
 
     try {
         if (type === 'whatsapp') {
-            const tables = sourceTable ? [sourceTable] : ["intro", "intro_uk", "follow_up", "follow_up_uk"];
+            const tables = sourceTable ? [sourceTable] : ["intro", "intro_uk", "follow_up", "follow_up_uk", "nurture_leads", "nurture_leads_uk"];
             const validTables = ["intro", "intro_uk", "follow_up", "follow_up_uk"];
+            const nurtureTables = ["nurture_leads", "nurture_leads_uk"];
             const selected = tables.filter(t => validTables.includes(t));
+            const selectedNurture = tables.filter(t => nurtureTables.includes(t));
 
-            const results = await Promise.all(
-                selected.map(t => fetchTableData(t, "WP_last_contacted"))
-            );
+            const [results, nurtureResults] = await Promise.all([
+                // No DB-level date filter on TEXT columns; in-memory isWhatsAppEligible handles it
+                Promise.all(selected.map(t => fetchTableData(t))),
+                Promise.all(selectedNurture.map(t => fetchTableData(t)))
+            ]);
+
+            const NURTURE_WP_COLS = [
+                'week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+                'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+                'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4',
+            ];
+            const nurtureKeys = NURTURE_WP_COLS;
+            const NURTURE_TO_WP: Record<string, string> = {};
+            nurtureKeys.forEach((key, i) => { NURTURE_TO_WP[key] = `W.P_${i + 1}`; });
+            const NURTURE_TS_TO_WP: Record<string, string> = {};
+            nurtureKeys.forEach((key, i) => { NURTURE_TS_TO_WP[`${key}_ts`] = `W.P_${i + 1} TS`; });
+            const REPLIED_MAP: Record<string, string> = {};
+            const FOLLOWUP_MAP: Record<string, string> = {};
+            const FOLLOWUP_TS_MAP: Record<string, string> = {};
+            for (let i = 1; i <= 10; i++) {
+                REPLIED_MAP[`wp_replied_${i}`] = `W.P_Replied_${i}`;
+                FOLLOWUP_MAP[`wp_followup_${i}`] = `W.P_FollowUp_${i}`;
+                FOLLOWUP_TS_MAP[`wp_followup_ts_${i}`] = `W.P_FollowUp_${i} TS`;
+            }
 
             if (whatsappOnly) {
                 const rawResponse: Record<string, any> = { master_leads: [] };
@@ -147,8 +170,38 @@ export async function GET(req: Request) {
                 validTables.forEach(t => {
                     if (!selected.includes(t)) rawResponse[t] = [];
                 });
-                const consolidated = consolidateLeads(rawResponse);
-                const filtered = consolidated.filter(isWhatsAppEligible);
+                const consolidated = consolidateLeads(rawResponse).filter(isWhatsAppEligible);
+
+                // Normalise and add nurture rows
+                const nurtureLeads: any[] = [];
+                selectedNurture.forEach((t, i) => {
+                    (nurtureResults[i].data || []).forEach((l: any) => {
+                        const mapped: any = { ...l, source_table: t, source_loop: t === 'nurture_leads' ? 'Nurture' : 'Nurture UK' };
+                        nurtureKeys.forEach((nk) => {
+                            const wpKey = NURTURE_TO_WP[nk];
+                            if (l[nk] && String(l[nk]).trim() !== '') mapped[wpKey] = l[nk];
+                        });
+                        nurtureKeys.forEach((nk) => {
+                            const tsKey = `${nk}_ts`;
+                            const wpTsKey = NURTURE_TS_TO_WP[tsKey];
+                            if (l[tsKey]) mapped[wpTsKey] = String(l[tsKey]);
+                        });
+                        Object.entries(REPLIED_MAP).forEach(([src, dest]) => {
+                            if (l[src] && String(l[src]).trim() !== '') mapped[dest] = l[src];
+                        });
+                        Object.entries(FOLLOWUP_MAP).forEach(([src, dest]) => {
+                            if (l[src] && String(l[src]).trim() !== '') mapped[dest] = l[src];
+                        });
+                        Object.entries(FOLLOWUP_TS_MAP).forEach(([src, dest]) => {
+                            if (l[src]) mapped[dest] = String(l[src]);
+                        });
+                        mapped["WP_Replied_track"] = l.wp_replied_track || '';
+                        mapped["WP_last_contacted"] = l.wp_last_contacted || l.last_contacted || '';
+                        if (isWhatsAppEligible(mapped)) nurtureLeads.push(mapped);
+                    });
+                });
+
+                const filtered = [...consolidated, ...nurtureLeads];
                 return new NextResponse(JSON.stringify({ whatsappLeads: filtered, totalWhatsappLeads: filtered.length }), {
                     status: 200,
                     headers: {
@@ -165,9 +218,18 @@ export async function GET(req: Request) {
                 response[t] = results[i].data;
                 response[`total_${t}`] = results[i].total;
             });
-            // Ensure missing tables return empty arrays
+            selectedNurture.forEach((t, i) => {
+                response[t] = nurtureResults[i].data;
+                response[`total_${t}`] = nurtureResults[i].total;
+            });
             validTables.forEach(t => {
                 if (!selected.includes(t)) {
+                    response[t] = [];
+                    response[`total_${t}`] = 0;
+                }
+            });
+            nurtureTables.forEach(t => {
+                if (!selectedNurture.includes(t)) {
                     response[t] = [];
                     response[`total_${t}`] = 0;
                 }
@@ -219,10 +281,11 @@ export async function GET(req: Request) {
         const [leadsResult, masterLeadsResult, introResult, introUkResult, followUpResult, followUpUkResult] = await Promise.all([
             fetchTableData("leads", "last_outreach_at"),
             fetchTableData("master_leads", "Last Contacted"),
-            fetchTableData("intro", "WP_last_contacted"),
-            fetchTableData("intro_uk", "WP_last_contacted"),
-            fetchTableData("follow_up", "WP_last_contacted"),
-            fetchTableData("follow_up_uk", "WP_last_contacted")
+            // No DB-level date filter on TEXT columns
+            fetchTableData("intro"),
+            fetchTableData("intro_uk"),
+            fetchTableData("follow_up"),
+            fetchTableData("follow_up_uk")
         ]);
 
         const [v1_i, v2_i, v1_iu, v2_iu, v1_fu, v2_fu, v1_fuu, v2_fuu] = await Promise.all([

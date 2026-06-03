@@ -15,7 +15,7 @@ import {
     Cell
 } from "recharts";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { TrendingUp, Users, MessageSquare, Send, RefreshCw, BarChart3, Building2, Info } from "lucide-react";
+import { TrendingUp, Users, MessageSquare, Send, RefreshCw, BarChart3, Building2, Info, Leaf, Globe, Flag } from "lucide-react";
 import {
     Tooltip as UITooltip,
     TooltipContent,
@@ -37,6 +37,8 @@ export default function WhatsappAnalyticsPage() {
         loopData: [] as any[]
     });
     const [ownerStats, setOwnerStats] = useState({ reachouts: 0, replies: 0, msgsSent: 0 });
+    const [nurtureStats, setNurtureStats] = useState({ totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
+    const [nurtureUkStats, setNurtureUkStats] = useState({ totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
     const [trendData, setTrendData] = useState<any[]>([]);
     const [roundData, setRoundData] = useState<any[]>([]);
     const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
@@ -62,6 +64,8 @@ export default function WhatsappAnalyticsPage() {
                     loopData: data.roundData || []
                 });
                 setOwnerStats(data.ownerStats);
+                setNurtureStats(data.nurtureStats || { totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
+                setNurtureUkStats(data.nurtureUkStats || { totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
                 setTrendData(data.trendData);
                 setRoundData(data.roundData || []);
             } catch (e) {
@@ -150,6 +154,35 @@ export default function WhatsappAnalyticsPage() {
                         color="text-amber-600"
                         bg="bg-amber-50"
                     />
+                </div>
+            </div>
+
+            {/* Nurture Analytics Section */}
+            <div className="space-y-4">
+                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Leaf className="h-4 w-4 text-violet-500" /> Nurture Analytics
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <div className="flex items-center gap-2 mb-2">
+                            <Globe className="h-3.5 w-3.5 text-slate-400" />
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Secondary Nurture</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <StatCard title="Total Sent" value={loading ? "..." : nurtureStats.totalSent.toLocaleString()} icon={Send} color="text-violet-600" bg="bg-violet-50" />
+                            <StatCard title="Replies" value={loading ? "..." : nurtureStats.replied.toLocaleString()} icon={MessageSquare} color="text-emerald-600" bg="bg-emerald-50" />
+                        </div>
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2 mb-2">
+                            <Flag className="h-3.5 w-3.5 text-slate-400" />
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unknown Nurture</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <StatCard title="Total Sent" value={loading ? "..." : nurtureUkStats.totalSent.toLocaleString()} icon={Send} color="text-teal-600" bg="bg-teal-50" />
+                            <StatCard title="Replies" value={loading ? "..." : nurtureUkStats.replied.toLocaleString()} icon={MessageSquare} color="text-emerald-600" bg="bg-emerald-50" />
+                        </div>
+                    </div>
                 </div>
             </div>
 

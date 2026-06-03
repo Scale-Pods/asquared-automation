@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay } from 'date-fns';
-import { parseMsg, parseTSDate, getMsgDateWithFallback, isWithinRange, fetchAllRows, processReplyLeads } from '@/lib/server-parsers';
+import { parseMsg, getMsgDateWithFallback, isWithinRange, fetchAllRows, processReplyLeads } from '@/lib/server-parsers';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,20 +56,25 @@ function getLeadLatestActivity(lead: any): Date {
 
 function getReachoutDate(lead: any): Date | null {
     const wp1 = lead["W.P_1"];
-    if (!wp1 || wp1 === "" || wp1 === "No") return null;
-    let reachoutDate = parseMsg(wp1).date;
-    if (!reachoutDate) {
-        const wp1Ts = lead["W.P_1 TS"];
-        if (wp1Ts && wp1Ts.includes(' - ')) {
-            const parts = wp1Ts.split(' - ');
-            const datePart = parts[parts.length - 1].trim();
-            const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-            if (match) {
-                reachoutDate = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-            }
+    if (wp1 && wp1 !== "" && wp1 !== "No") {
+        const d = parseMsg(wp1).date;
+        if (d) return d;
+    }
+    const wp1Ts = lead["W.P_1 TS"];
+    if (wp1Ts && wp1Ts.includes(' - ')) {
+        const parts = wp1Ts.split(' - ');
+        const datePart = parts[parts.length - 1].trim();
+        const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (match) {
+            return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
         }
     }
-    return reachoutDate;
+    // leads table uses last_outreach_at instead of W.P_1
+    if (lead.last_outreach_at) {
+        const d = new Date(lead.last_outreach_at);
+        if (!isNaN(d.getTime())) return d;
+    }
+    return null;
 }
 
 export async function GET(req: Request) {
@@ -107,15 +112,55 @@ export async function GET(req: Request) {
             introRows,
             introUkRows,
             followUpRows,
-            followUpUkRows
+            followUpUkRows,
+            nurtureRows,
+            nurtureUkRows,
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
             fetchAllRows(baseUrl, headers, "master_leads", "Last Contacted", from, to),
-            fetchAllRows(baseUrl, headers, "intro", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "intro_uk", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "follow_up", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "follow_up_uk", "WP_last_contacted", from, to)
+            // No DB-level date filter on TEXT columns; in-memory isInRange handles it
+            fetchAllRows(baseUrl, headers, "intro", null, from, to),
+            fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
+            fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
+            fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads", null, from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads_uk", null, from, to),
         ]);
+
+        // Compute nurture stats separately (different schema: week1_wp_1..week3_wp_4, wp_replied_track)
+        const NURTURE_WP_COLS = [
+            'week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4',
+        ];
+
+        const getNurtureReachoutDate = (l: any): Date | null => {
+            const ts = l.wp_last_contacted || l.last_contacted;
+            if (ts) { const d = new Date(ts); if (!isNaN(d.getTime())) return d; }
+            for (const col of NURTURE_WP_COLS) {
+                if (l[col] && String(l[col]).trim() !== '') return new Date(l.created_at || 0);
+            }
+            return null;
+        };
+
+        let nurtureMsgsSent = 0, nurtureReplies = 0, nurtureLeadsContacted = 0;
+        let nurtureUkMsgsSent = 0, nurtureUkReplies = 0, nurtureUkLeadsContacted = 0;
+
+        [...nurtureRows].forEach((l: any) => {
+            const rd = getNurtureReachoutDate(l);
+            if (!rd || !isInRange(rd)) return;
+            nurtureLeadsContacted++;
+            NURTURE_WP_COLS.forEach(col => { if (l[col] && String(l[col]).trim() !== '') nurtureMsgsSent++; });
+            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureReplies++;
+        });
+
+        [...nurtureUkRows].forEach((l: any) => {
+            const rd = getNurtureReachoutDate(l);
+            if (!rd || !isInRange(rd)) return;
+            nurtureUkLeadsContacted++;
+            NURTURE_WP_COLS.forEach(col => { if (l[col] && String(l[col]).trim() !== '') nurtureUkMsgsSent++; });
+            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureUkReplies++;
+        });
 
         const allLeads = [...leadsRows, ...introRows, ...introUkRows, ...followUpRows, ...followUpUkRows];
 
@@ -221,6 +266,8 @@ export async function GET(req: Request) {
         };
 
         const ownerStats = { reachouts: ownerReachouts, replies: ownerReplies, msgsSent: ownerMsgsSent };
+        const nurtureStats = { leadsContacted: nurtureLeadsContacted, msgsSent: nurtureMsgsSent, replies: nurtureReplies };
+        const nurtureUkStats = { leadsContacted: nurtureUkLeadsContacted, msgsSent: nurtureUkMsgsSent, replies: nurtureUkReplies };
 
         const donutData = [
             { name: 'Total Leads', value: filteredLeads.length, color: '#8b5cf6' },
@@ -232,7 +279,7 @@ export async function GET(req: Request) {
             .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
             .slice(-7);
 
-        return NextResponse.json({ stats, ownerStats, donutData, trendData, repliedLeads, replyData: processReplyLeads(repliedLeads) }, {
+        return NextResponse.json({ stats, ownerStats, nurtureStats, nurtureUkStats, donutData, trendData, repliedLeads, replyData: processReplyLeads(repliedLeads) }, {
             headers: {
                 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
                 'Pragma': 'no-cache',

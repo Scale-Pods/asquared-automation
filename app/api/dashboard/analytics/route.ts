@@ -103,17 +103,17 @@ async function fetchAllRows(baseUrl: string, headers: Record<string, string>, ta
     let offset = 0;
     while (true) {
         let url = `${baseUrl}/${table}?select=*&offset=${offset}&limit=${PAGE_SIZE}`;
-        if (dateColumn && from) url += `&"${dateColumn}"=gte.${from}`;
-        if (dateColumn && to) url += `&"${dateColumn}"=lte.${to}`;
+        if (dateColumn && from) url += `&%22${dateColumn}%22=gte.${from}`;
+        if (dateColumn && to) url += `&%22${dateColumn}%22=lte.${to}`;
         try {
             const res = await fetch(url, { headers, cache: 'no-store' });
-            if (!res.ok) break;
+            if (!res.ok) { console.error(`fetchAllRows: ${table} returned ${res.status} for URL ${url}`); break; }
             const data = await res.json();
             if (!Array.isArray(data) || data.length === 0) break;
             allData = allData.concat(data);
             if (data.length < PAGE_SIZE) break;
             offset += PAGE_SIZE;
-        } catch { break; }
+        } catch (e) { console.error(`fetchAllRows: ${table} threw`, e); break; }
     }
     return allData;
 }
@@ -124,23 +124,23 @@ async function fetchAllRowsWithDateParts(baseUrl: string, headers: Record<string
     let offset = 0;
     while (true) {
         let url = `${baseUrl}/${table}?select=*&offset=${offset}&limit=${PAGE_SIZE}`;
-        if (from) url += `&"${dateColumn}"=gte.${from}`;
+        if (from) url += `&%22${dateColumn}%22=gte.${from}`;
         if (to) {
             const endDate = new Date(to);
             if (endDate.getUTCHours() === 0 && endDate.getUTCMinutes() === 0 && endDate.getUTCSeconds() === 0) {
                 endDate.setUTCHours(23, 59, 59, 999);
             }
-            url += `&"${dateColumn}"=lte.${endDate.toISOString()}`;
+            url += `&%22${dateColumn}%22=lte.${endDate.toISOString()}`;
         }
         try {
             const res = await fetch(url, { headers, cache: 'no-store' });
-            if (!res.ok) break;
+            if (!res.ok) { console.error(`fetchAllRowsWithDateParts: ${table} returned ${res.status} for URL ${url}`); break; }
             const data = await res.json();
             if (!Array.isArray(data) || data.length === 0) break;
             allData = allData.concat(data);
             if (data.length < PAGE_SIZE) break;
             offset += PAGE_SIZE;
-        } catch { break; }
+        } catch (e) { console.error(`fetchAllRowsWithDateParts: ${table} threw`, e); break; }
     }
     return allData;
 }
@@ -177,7 +177,9 @@ export async function GET(req: Request) {
             followUpRows,
             followUpUkRows,
             allCallsRaw,
-            allCallsNf
+            allCallsNf,
+            nurtureLeadsRows,
+            nurtureLeadsUkRows,
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", null, null, null),
             fetchAllRows(baseUrl, headers, "master_leads", null, null, null),
@@ -186,7 +188,9 @@ export async function GET(req: Request) {
             fetchAllRowsWithDateParts(baseUrl, headers, "follow_up", "WP_last_contacted", null, null),
             fetchAllRowsWithDateParts(baseUrl, headers, "follow_up_uk", "WP_last_contacted", null, null),
             fetchAllRowsWithDateParts(baseUrl, headers, "vapi_call_logs", "created_at", from, to),
-            fetchAllRowsWithDateParts(baseUrl, headers, "vapi_call_logs_nf", "created_at", from, to)
+            fetchAllRowsWithDateParts(baseUrl, headers, "vapi_call_logs_nf", "created_at", from, to),
+            fetchAllRowsWithDateParts(baseUrl, headers, "nurture_leads", "created_at", from, to),
+            fetchAllRowsWithDateParts(baseUrl, headers, "nurture_leads_uk", "created_at", from, to),
         ]);
 
         const allCalls = [...allCallsRaw, ...allCallsNf];
@@ -378,6 +382,41 @@ export async function GET(req: Request) {
         const unknownVoiceDurationString = formatDuration(unknownVoiceSeconds);
         const ownerVoiceDurationString = formatDuration(ownerVoiceSeconds);
 
+        // --- Nurture Leads (Secondary) stats ---
+        const WP_COLS = [
+            'week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4',
+        ];
+
+        let nurtureLeadsCount = 0;
+        let nurtureWpReachouts = 0;
+        let nurtureReplies = 0;
+        let minNurtureDate: Date | null = null;
+        nurtureLeadsRows.forEach((l: any) => {
+            nurtureLeadsCount++;
+            const d = new Date(l.created_at || 0);
+            if (!minNurtureDate || d < minNurtureDate) minNurtureDate = d;
+            if (WP_COLS.some((col: string) => l[col] && String(l[col]).trim() !== '')) nurtureWpReachouts++;
+            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureReplies++;
+        });
+
+        // --- Nurture Leads UK (Unknown) stats ---
+        let nurtureUkLeadsCount = 0;
+        let nurtureUkWpReachouts = 0;
+        let nurtureUkReplies = 0;
+        let minNurtureUkDate: Date | null = null;
+        nurtureLeadsUkRows.forEach((l: any) => {
+            nurtureUkLeadsCount++;
+            const d = new Date(l.created_at || 0);
+            if (!minNurtureUkDate || d < minNurtureUkDate) minNurtureUkDate = d;
+            if (WP_COLS.some((col: string) => l[col] && String(l[col]).trim() !== '')) nurtureUkWpReachouts++;
+            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureUkReplies++;
+        });
+
+        const nurtureSince    = formatLabel(minNurtureDate);
+        const nurtureUkSince  = formatLabel(minNurtureUkDate);
+
         const response = {
             normalLeadsCount,
             emailCount,
@@ -403,7 +442,15 @@ export async function GET(req: Request) {
             ownerRepliesSince,
             acquisitionChartData,
             replyLeads,
-            replyData: processReplyLeads(replyLeads)
+            replyData: processReplyLeads(replyLeads),
+            nurtureLeadsCount,
+            nurtureWpReachouts,
+            nurtureReplies,
+            nurtureSince,
+            nurtureUkLeadsCount,
+            nurtureUkWpReachouts,
+            nurtureUkReplies,
+            nurtureUkSince,
         };
 
         return NextResponse.json(response, {

@@ -62,6 +62,14 @@ interface AnalyticsResponse {
     acquisitionChartData: { name: string; leads: number }[];
     replyLeads: any[];
     replyData?: ReplyData[];
+    nurtureLeadsCount: number;
+    nurtureWpReachouts: number;
+    nurtureReplies: number;
+    nurtureSince: string;
+    nurtureUkLeadsCount: number;
+    nurtureUkWpReachouts: number;
+    nurtureUkReplies: number;
+    nurtureUkSince: string;
 }
 
 interface SourceStats {
@@ -202,21 +210,21 @@ export default function MasterDashboard() {
                         <Users className="h-3.5 w-3.5" />
                     </div>
                     <h2 className="text-sm font-bold text-slate-900">Unknown & Secondary Leads Data</h2>
-                    <span className="text-[10px] text-slate-400">leads, intro, follow_up | voice: vapi_call_logs_nf</span>
+                    <span className="text-[10px] text-slate-400">leads, intro, follow_up, nurture | voice: vapi_call_logs_nf</span>
                 </div>
                 <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4">
                     <CompactCard
                         title="Total Leads"
-                        value={loading ? "..." : (s?.normalLeadsCount ?? 0).toLocaleString()}
-                        subtitle={s?.oldestLeadDate ?? "..."}
+                        value={loading ? "..." : ((s?.normalLeadsCount ?? 0) + (s?.nurtureLeadsCount ?? 0) + (s?.nurtureUkLeadsCount ?? 0)).toLocaleString()}
+                        subtitle={`${(s?.normalLeadsCount ?? 0).toLocaleString()} normal | ${((s?.nurtureLeadsCount ?? 0) + (s?.nurtureUkLeadsCount ?? 0)).toLocaleString()} nurture`}
                         icon={<Users className="h-5 w-5" />}
                         color="text-indigo-600"
                         bg="bg-indigo-50"
                     />
                     <CompactCard
                         title="WhatsApp Reachouts"
-                        value={loading ? "..." : (s?.whatsappReachouts ?? 0).toLocaleString()}
-                        subtitle={s?.oldestWPDate ?? "..."}
+                        value={loading ? "..." : ((s?.whatsappReachouts ?? 0) + (s?.nurtureWpReachouts ?? 0) + (s?.nurtureUkWpReachouts ?? 0)).toLocaleString()}
+                        subtitle={`${(s?.whatsappReachouts ?? 0).toLocaleString()} normal | ${((s?.nurtureWpReachouts ?? 0) + (s?.nurtureUkWpReachouts ?? 0)).toLocaleString()} nurture`}
                         icon={<MessageCircle className="h-5 w-5" />}
                         color="text-purple-600"
                         bg="bg-purple-50"
@@ -231,8 +239,8 @@ export default function MasterDashboard() {
                     />
                     <CompactCard
                         title="Total Replies"
-                        value={loading ? "..." : (s?.totalReplies ?? 0).toLocaleString()}
-                        subtitle={`${(s?.whatsappReachouts ?? 0) > 0 ? (((s?.totalReplies ?? 0) / (s?.whatsappReachouts ?? 1)) * 100).toFixed(1) : 0}% rate`}
+                        value={loading ? "..." : ((s?.totalReplies ?? 0) + (s?.nurtureReplies ?? 0) + (s?.nurtureUkReplies ?? 0)).toLocaleString()}
+                        subtitle={`${(s?.totalReplies ?? 0).toLocaleString()} normal | ${((s?.nurtureReplies ?? 0) + (s?.nurtureUkReplies ?? 0)).toLocaleString()} nurture`}
                         icon={<Expand className="h-5 w-5" />}
                         color="text-indigo-600"
                         bg="bg-indigo-50"

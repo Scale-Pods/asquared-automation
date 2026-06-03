@@ -14,7 +14,7 @@ import {
     Send,
     Building2,
     MessageSquare,
-    Info
+    Info,
 } from "lucide-react";
 import {
     PieChart,
@@ -64,7 +64,13 @@ export default function WhatsappDashboardPage() {
         unresponsive: 0
     });
     const [ownerStats, setOwnerStats] = useState({ reachouts: 0, replies: 0, msgsSent: 0 });
+    const [nurtureStats, setNurtureStats] = useState({ leadsContacted: 0, msgsSent: 0, replies: 0 });
+    const [nurtureUkStats, setNurtureUkStats] = useState({ leadsContacted: 0, msgsSent: 0, replies: 0 });
     const [donutData, setDonutData] = useState<any[]>([]);
+
+    const combinedContacted = (stats.contactedLeads || 0) + (nurtureStats.msgsSent || 0) + (nurtureUkStats.msgsSent || 0);
+    const combinedReachouts = (stats.totalLeads || 0) + (nurtureStats.leadsContacted || 0) + (nurtureUkStats.leadsContacted || 0);
+    const combinedReplies = (stats.totalReplies || 0) + (nurtureStats.replies || 0) + (nurtureUkStats.replies || 0);
     const [trendData, setTrendData] = useState<any[]>([]);
     const [repliedLeads, setRepliedLeads] = useState<any[]>([]);
     const [replyData, setReplyData] = useState<any[] | undefined>(undefined);
@@ -85,6 +91,8 @@ export default function WhatsappDashboardPage() {
                 const data = await fetchCached(`/api/whatsapp/overview?${q}`);
                 setStats(data.stats);
                 setOwnerStats(data.ownerStats);
+                setNurtureStats(data.nurtureStats || { leadsContacted: 0, msgsSent: 0, replies: 0 });
+                setNurtureUkStats(data.nurtureUkStats || { leadsContacted: 0, msgsSent: 0, replies: 0 });
                 setDonutData(data.donutData);
                 setTrendData(data.trendData);
                 setRepliedLeads(data.repliedLeads);
@@ -110,29 +118,41 @@ export default function WhatsappDashboardPage() {
                 <DateRangePicker onUpdate={(range) => setDateRange(range.range)} />
             </div>
 
-            {/* Overview Metric Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                <MetricCard
-                    title="Total Whatsapp Reachouts"
-                    value={loading ? "..." : stats.totalLeads.toLocaleString()}
-                    icon={Users}
-                    theme="purple"
-                    onClick={() => router.push('/dashboard/whatsapp/leads')}
-                />
-                <MetricCard
-                    title="Total Replies"
-                    value={loading ? "..." : stats.totalReplies.toLocaleString()}
-                    icon={MessageCircle}
-                    theme="emerald"
-                    onClick={() => setIsRepliesOpen(true)}
-                    info="This count is derived from the 'WP_Replied_track' column. Disclaimer: This feature has been installed now. To check original reply counts, please select the 'Last 3 Months' filter."
-                />
-                <MetricCard
-                    title="Messages Sent"
-                    value={loading ? "..." : stats.contactedLeads.toLocaleString()}
-                    icon={Send}
-                    theme="blue"
-                />
+            {/* Unknown & Secondary Data */}
+            <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                    <div className="p-1 bg-indigo-100 text-indigo-700 rounded-md">
+                        <Users className="h-3.5 w-3.5" />
+                    </div>
+                    <h2 className="text-sm font-bold text-slate-900">Unknown & Secondary Data</h2>
+                    <span className="text-[10px] text-slate-400">intro, follow_up, nurture</span>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                    <MetricCard
+                        title="Total Whatsapp Reachouts"
+                        value={loading ? "..." : combinedReachouts.toLocaleString()}
+                        subtitle={`${(stats.totalLeads || 0).toLocaleString()} normal | ${((nurtureStats.leadsContacted || 0) + (nurtureUkStats.leadsContacted || 0)).toLocaleString()} nurture`}
+                        icon={Users}
+                        theme="purple"
+                        onClick={() => router.push('/dashboard/whatsapp/leads')}
+                    />
+                    <MetricCard
+                        title="Total Replies"
+                        value={loading ? "..." : combinedReplies.toLocaleString()}
+                        subtitle={`${(stats.totalReplies || 0).toLocaleString()} normal | ${((nurtureStats.replies || 0) + (nurtureUkStats.replies || 0)).toLocaleString()} nurture`}
+                        icon={MessageCircle}
+                        theme="emerald"
+                        onClick={() => setIsRepliesOpen(true)}
+                        info="This count is derived from the 'WP_Replied_track' column."
+                    />
+                    <MetricCard
+                        title="Messages Sent"
+                        value={loading ? "..." : combinedContacted.toLocaleString()}
+                        subtitle={`${(stats.contactedLeads || 0).toLocaleString()} normal | ${((nurtureStats.msgsSent || 0) + (nurtureUkStats.msgsSent || 0)).toLocaleString()} nurture`}
+                        icon={Send}
+                        theme="blue"
+                    />
+                </div>
             </div>
 
             {/* Owner Metrics Section */}
@@ -254,7 +274,7 @@ export default function WhatsappDashboardPage() {
     );
 }
 
-function MetricCard({ title, value, icon: Icon, theme, desc, onClick, info }: any) {
+function MetricCard({ title, value, icon: Icon, theme, desc, subtitle, onClick, info }: any) {
     const themes: any = {
         purple: { bg: "bg-purple-50", text: "text-purple-600", border: "border-purple-100", iconBg: "bg-purple-100/50" },
         blue: { bg: "bg-blue-50", text: "text-blue-600", border: "border-blue-100", iconBg: "bg-blue-100/50" },
@@ -295,6 +315,7 @@ function MetricCard({ title, value, icon: Icon, theme, desc, onClick, info }: an
                     <div>
                         <h3 className="text-2xl font-black text-slate-900 tracking-tight">{value}</h3>
                         <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{title}</p>
+                        {subtitle && <p className="text-[10px] text-slate-400 mt-0.5">{subtitle}</p>}
                     </div>
                 </div>
             </CardContent>

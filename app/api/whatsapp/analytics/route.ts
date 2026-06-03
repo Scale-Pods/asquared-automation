@@ -54,20 +54,20 @@ function getLeadLatestActivity(lead: any): Date {
 
 function getReachoutDate(lead: any): Date | null {
     const wp1 = lead["W.P_1"];
-    if (!wp1 || wp1 === "" || wp1 === "No") return null;
-    let reachoutDate = parseMsg(wp1).date;
-    if (!reachoutDate) {
-        const wp1Ts = lead["W.P_1 TS"];
-        if (wp1Ts && wp1Ts.includes(' - ')) {
-            const parts = wp1Ts.split(' - ');
-            const datePart = parts[parts.length - 1].trim();
-            const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-            if (match) {
-                reachoutDate = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-            }
+    if (wp1 && wp1 !== "" && wp1 !== "No") {
+        const d = parseMsg(wp1).date;
+        if (d) return d;
+    }
+    const wp1Ts = lead["W.P_1 TS"];
+    if (wp1Ts && wp1Ts.includes(' - ')) {
+        const parts = wp1Ts.split(' - ');
+        const datePart = parts[parts.length - 1].trim();
+        const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (match) {
+            return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
         }
     }
-    return reachoutDate;
+    return null;
 }
 
 export async function GET(req: Request) {
@@ -101,21 +101,45 @@ export async function GET(req: Request) {
             return toYYYYMMDD(d) >= toYYYYMMDD(fromDate) && toYYYYMMDD(d) <= toYYYYMMDD(toDate);
         };
 
+        const NURTURE_WP_COLS = [
+            'week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4',
+        ];
+
         const [
             leadsRows,
             masterLeads,
             introRows,
             introUkRows,
             followUpRows,
-            followUpUkRows
+            followUpUkRows,
+            nurtureRows,
+            nurtureUkRows,
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
             fetchAllRows(baseUrl, headers, "master_leads", "Last Contacted", from, to),
-            fetchAllRows(baseUrl, headers, "intro", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "intro_uk", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "follow_up", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "follow_up_uk", "WP_last_contacted", from, to)
+            // No DB-level date filter on TEXT columns; in-memory isInRange handles it
+            fetchAllRows(baseUrl, headers, "intro", null, from, to),
+            fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
+            fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
+            fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads", null, from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads_uk", null, from, to),
         ]);
+
+        // Nurture stats (separate schema)
+        let nurtureTotalSent = 0, nurtureReplied = 0;
+        let nurtureUkTotalSent = 0, nurtureUkReplied = 0;
+
+        [...nurtureRows].forEach((l: any) => {
+            NURTURE_WP_COLS.forEach(col => { if (l[col] && String(l[col]).trim() !== '') nurtureTotalSent++; });
+            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureReplied++;
+        });
+        [...nurtureUkRows].forEach((l: any) => {
+            NURTURE_WP_COLS.forEach(col => { if (l[col] && String(l[col]).trim() !== '') nurtureUkTotalSent++; });
+            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureUkReplied++;
+        });
 
         const allLeads = [...leadsRows, ...introRows, ...introUkRows, ...followUpRows, ...followUpUkRows];
 
@@ -268,10 +292,18 @@ export async function GET(req: Request) {
         };
 
         const ownerStats = { reachouts: ownerReachouts, replies: ownerReplies, msgsSent: ownerMsgsSent };
+        const nurtureStats = {
+            totalSent: nurtureTotalSent, replied: nurtureReplied, total: nurtureRows.length,
+            replyRate: nurtureRows.length > 0 ? ((nurtureReplied / nurtureRows.length) * 100).toFixed(1) + "%" : "0%"
+        };
+        const nurtureUkStats = {
+            totalSent: nurtureUkTotalSent, replied: nurtureUkReplied, total: nurtureUkRows.length,
+            replyRate: nurtureUkRows.length > 0 ? ((nurtureUkReplied / nurtureUkRows.length) * 100).toFixed(1) + "%" : "0%"
+        };
 
         const repliedTrend = groups;
 
-        return NextResponse.json({ stats, ownerStats, trendData, repliedTrend, roundData }, {
+        return NextResponse.json({ stats, ownerStats, nurtureStats, nurtureUkStats, trendData, repliedTrend, roundData }, {
             headers: {
                 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
                 'Pragma': 'no-cache',

@@ -41,6 +41,35 @@ import { ConsolidatedLead } from "@/lib/leads-utils";
 import { WhatsAppChatDetail } from "@/components/dashboard/whatsapp-chat-detail";
 import { ASLoader } from "@/components/as-loader";
 
+function getMsgDate(raw: any): Date | null {
+    if (!raw || !String(raw).trim()) return null;
+    const content = String(raw).trim();
+    if (content.length >= 10 && !isNaN(new Date(content).getTime())) {
+        if (content.includes('T') || (content.includes('-') && content.includes(':'))) return new Date(content);
+    }
+    const isoRegex = /[\n\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*)$/;
+    const isoMatch = content.match(isoRegex);
+    if (isoMatch) return new Date(isoMatch[1]);
+    return null;
+}
+
+function getLeadLatestWpActivity(lead: any): Date | null {
+    let latest: Date | null = null;
+    for (let i = 1; i <= 12; i++) {
+        const d = getMsgDate(lead[`W.P_${i}`] || lead.stage_data?.[`WhatsApp ${i}`]);
+        if (d && (!latest || d > latest)) latest = d;
+    }
+    const fd = getMsgDate(lead["W.P_FollowUp"] || lead.stage_data?.["WhatsApp FollowUp"]);
+    if (fd && (!latest || fd > latest)) latest = fd;
+    for (let i = 1; i <= 10; i++) {
+        const d = getMsgDate(lead[`W.P_Replied_${i}`]);
+        if (d && (!latest || d > latest)) latest = d;
+    }
+    const rd = getMsgDate(lead.WP_Replied_track);
+    if (rd && (!latest || rd > latest)) latest = rd;
+    return latest;
+}
+
 export default function WhatsappLeadsPage() {
     const [leads, setLeads] = useState<ConsolidatedLead[]>([]);
     const [total, setTotal] = useState(0);
@@ -387,7 +416,10 @@ export default function WhatsappLeadsPage() {
                                                     <StatusBadge lead={lead} />
                                                 </td>
                                                 <td className="px-4 py-4 text-slate-500 text-xs">
-                                                    {new Date(lead.last_contacted!).toLocaleString()}
+                                                    {(() => {
+                                                        const d = getLeadLatestWpActivity(lead) || (lead.WP_last_contacted ? new Date(lead.WP_last_contacted) : null) || (lead.last_contacted ? new Date(lead.last_contacted) : null);
+                                                        return d ? d.toLocaleString() : "—";
+                                                    })()}
                                                 </td>
                                                 <td className="px-4 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                                                     <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -438,7 +470,15 @@ export default function WhatsappLeadsPage() {
                                                         )}
                                                     </td>
                                                     <td className="px-4 py-4 text-slate-500 text-xs">
-                                                        {owner["Whatsapp_1_Date"] ? new Date(owner["Whatsapp_1_Date"]).toLocaleString() : "—"}
+                                                        {(() => {
+                                                            const dates: Date[] = [];
+                                                            if (owner["Whatsapp_1_Date"]) dates.push(new Date(owner["Whatsapp_1_Date"]));
+                                                            if (owner["Whatsapp_2_Date"]) dates.push(new Date(owner["Whatsapp_2_Date"]));
+                                                            if (owner["WTS_Reply_Track"]) { const rd = getMsgDate(owner["WTS_Reply_Track"]); if (rd) dates.push(rd); }
+                                                            for (let i = 1; i <= 5; i++) { const d = getMsgDate(owner[`Bot_Replied_${i}`]); if (d) dates.push(d); }
+                                                            const latest = dates.length > 0 ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
+                                                            return latest ? latest.toLocaleString() : "—";
+                                                        })()}
                                                     </td>
                                                     <td className="px-4 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                                                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0">

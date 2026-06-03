@@ -53,10 +53,11 @@ export async function GET(req: Request) {
         const [leadsResult, masterLeadsResult, introResult, introUkResult, followUpResult, followUpUkResult] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
             fetchAllRows(baseUrl, headers, "master_leads", "last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "intro", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "intro_uk", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "follow_up", "WP_last_contacted", from, to),
-            fetchAllRows(baseUrl, headers, "follow_up_uk", "WP_last_contacted", from, to)
+            // No DB-level date filter on TEXT columns; in-memory created_at filter handles it
+            fetchAllRows(baseUrl, headers, "intro", null, from, to),
+            fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
+            fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
+            fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to)
         ]);
 
         const rawResponse: Record<string, any> = {

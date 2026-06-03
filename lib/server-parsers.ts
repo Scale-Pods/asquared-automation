@@ -174,24 +174,31 @@ export async function fetchAllRows(baseUrl: string, headers: Record<string, stri
     let allData: any[] = [];
     let offset = 0;
     while (true) {
-        let url = `${baseUrl}/${table}?select=*&offset=${offset}&limit=${PAGE_SIZE}`;
-        if (dateColumn && from) url += `&"${dateColumn}"=gte.${from}`;
+        const params = new URLSearchParams({
+            select: '*',
+            offset: String(offset),
+            limit: String(PAGE_SIZE),
+        });
+        if (dateColumn && from) {
+            params.append(dateColumn, `gte.${from}`);
+        }
         if (dateColumn && to) {
             const endDate = new Date(to);
             if (endDate.getUTCHours() === 0 && endDate.getUTCMinutes() === 0 && endDate.getUTCSeconds() === 0) {
                 endDate.setUTCHours(23, 59, 59, 999);
             }
-            url += `&"${dateColumn}"=lte.${endDate.toISOString()}`;
+            params.append(dateColumn, `lte.${endDate.toISOString()}`);
         }
+        const url = `${baseUrl}/${table}?${params.toString()}`;
         try {
             const res = await fetch(url, { headers, cache: 'no-store' });
-            if (!res.ok) break;
+            if (!res.ok) { console.error(`fetchAllRows: ${table} returned ${res.status} for URL ${url}`); break; }
             const data = await res.json();
             if (!Array.isArray(data) || data.length === 0) break;
             allData = allData.concat(data);
             if (data.length < PAGE_SIZE) break;
             offset += PAGE_SIZE;
-        } catch { break; }
+        } catch (e) { console.error(`fetchAllRows: ${table} threw`, e); break; }
     }
     return allData;
 }

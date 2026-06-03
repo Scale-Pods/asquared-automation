@@ -1,8 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Phone, Clock, DollarSign, CheckCircle, PhoneIncoming, Crown } from "lucide-react";
-import { calculateDuration, formatDuration } from "@/lib/utils";
+import { Phone, CheckCircle, PhoneIncoming, Crown } from "lucide-react";
 import { ASLoader } from "@/components/as-loader";
 import {
     BarChart,
@@ -14,17 +13,15 @@ import {
     ResponsiveContainer,
     LineChart,
     Line,
-    AreaChart,
-    Area,
 } from "recharts";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState, useEffect } from "react";
-import { format, subDays } from "date-fns";
+import { subDays } from "date-fns";
 import { useData } from "@/context/DataContext";
 
 export default function VoiceAnalyticsPage() {
-    const { voiceBalance, allTimeVoiceCount, allTimeOwnerVoiceCount } = useData();
+    const { voiceBalance } = useData();
     const [accountFilter, setAccountFilter] = useState("vapi");
     const [loadingLocal, setLoadingLocal] = useState(false);
     const [dateRange, setDateRange] = useState<any>({
@@ -34,7 +31,7 @@ export default function VoiceAnalyticsPage() {
 
     const [volumeData, setVolumeData] = useState<any[]>([]);
     const [durationData, setDurationData] = useState<any[]>([]);
-    const [costData, setCostData] = useState<any[]>([]);
+    const [_costData, setCostData] = useState<any[]>([]);
     const [stats, setStats] = useState({
         totalCalls: 0,
         avgDuration: 0,
@@ -55,6 +52,10 @@ export default function VoiceAnalyticsPage() {
         ownerCompletionRate: 0,
         waitingAvailabilityCount: 0,
         ownerWaitingAvailabilityCount: 0,
+        secondaryHotQualified: 0,
+        secondaryForecastReady: 0,
+        unknownHotQualified: 0,
+        unknownForecastReady: 0,
     });
 
     useEffect(() => {
@@ -96,6 +97,10 @@ export default function VoiceAnalyticsPage() {
                     ownerCompletionRate: data.ownerCompletionRate,
                     waitingAvailabilityCount: data.waitingAvailabilityCount,
                     ownerWaitingAvailabilityCount: data.ownerWaitingAvailabilityCount,
+                    secondaryHotQualified: data.secondaryHotQualified ?? 0,
+                    secondaryForecastReady: data.secondaryForecastReady ?? 0,
+                    unknownHotQualified: data.unknownHotQualified ?? 0,
+                    unknownForecastReady: data.unknownForecastReady ?? 0,
                 }));
                 setVolumeData(data.volumeData || []);
                 setDurationData(data.durationData || []);
@@ -136,9 +141,9 @@ export default function VoiceAnalyticsPage() {
             <div>
                 <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
                     <span className="p-1.5 bg-indigo-600 rounded-lg"><PhoneIncoming className="h-4 w-4 text-white" /></span>
-                    Secondary Leads Analytics 
+                    Secondary Leads Analytics
                 </h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <StatCard
                         title="Calls in Range"
                         value={stats.secondaryCalls.toLocaleString()}
@@ -162,6 +167,10 @@ export default function VoiceAnalyticsPage() {
                         icon={<CheckCircle className="h-5 w-5" />}
                         color="text-emerald-600"
                         bg="bg-emerald-50"
+                    />
+                    <SentimentCard
+                        hotQualified={stats.secondaryHotQualified}
+                        forecastReady={stats.secondaryForecastReady}
                     />
                 </div>
             </div>
@@ -196,13 +205,9 @@ export default function VoiceAnalyticsPage() {
                         color="text-emerald-600"
                         bg="bg-emerald-50"
                     />
-                    <StatCard
-                        title="Awaiting Availability"
-                        value={`${stats.unknownCalls > 0 ? ((stats.waitingAvailabilityCount / stats.unknownCalls) * 100).toFixed(1) : 0}%`}
-                        change={`${stats.waitingAvailabilityCount.toLocaleString()} / ${stats.unknownCalls.toLocaleString()} calls`}
-                        icon={<CheckCircle className="h-5 w-5" />}
-                        color="text-blue-600"
-                        bg="bg-blue-50"
+                    <SentimentCard
+                        hotQualified={stats.unknownHotQualified}
+                        forecastReady={stats.unknownForecastReady}
                     />
                 </div>
             </div>
@@ -290,6 +295,31 @@ export default function VoiceAnalyticsPage() {
                 </Card>
             </div>
         </div>
+    );
+}
+
+function SentimentCard({ hotQualified, forecastReady }: { hotQualified: number; forecastReady: number }) {
+    const total = hotQualified + forecastReady;
+    return (
+        <Card className="border-slate-200">
+            <CardContent className="p-6">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-tighter mb-3">Positive Response Rate</p>
+                <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">Hot / Qualified</span>
+                        <span className="text-lg font-bold text-slate-900">{hotQualified.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">Forecast / Ready To Buy</span>
+                        <span className="text-lg font-bold text-slate-900">{forecastReady.toLocaleString()}</span>
+                    </div>
+                    <div className="pt-1 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total</span>
+                        <span className="text-sm font-bold text-slate-700">{total.toLocaleString()}</span>
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
     );
 }
 

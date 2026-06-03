@@ -86,9 +86,13 @@ export async function GET(req: Request) {
     };
 
     try {
-        const [ownerRows, nfRows] = await Promise.all([
+        // Fetch call logs + leads sentiments in parallel
+        const leadsColumns = 'call_sentiment1,call_sentiment2,call_sentiment3,call_sentiment4,call_sentiment5,call_sentiment6';
+
+        const [ownerRows, nfRows, leadsRows] = await Promise.all([
             fetchTable(baseUrl, headers, 'vapi_call_logs', columns, dateFilter),
             fetchTable(baseUrl, headers, 'vapi_call_logs_nf', columns, dateFilter),
+            fetchTable(baseUrl, headers, 'leads', leadsColumns, ''),
         ]);
 
         // Count "Awaiting availability" directly from raw rows (case-insensitive, trimmed)
@@ -98,9 +102,28 @@ export async function GET(req: Request) {
         const ownerWaitingCount = ownerRows.filter(
             (r: any) => r.assistantId === OWNERS_ASSISTANT && isAwaiting(r)
         ).length;
-        const unknownWaitingCount = nfRows.filter(
-            (r: any) => r.assistantId === UNKNOWN_ASSISTANT && isAwaiting(r)
-        ).length;
+
+        // Secondary sentiment: call_sentiment1/2/3
+        let secondaryHotQualified = 0;
+        let secondaryForecastReady = 0;
+        leadsRows.forEach((l: any) => {
+            [l.call_sentiment1, l.call_sentiment2, l.call_sentiment3].forEach((v: any) => {
+                const val = (v || '').trim().toLowerCase();
+                if (val === 'hot / qualified') secondaryHotQualified++;
+                else if (val === 'forecast / ready to buy') secondaryForecastReady++;
+            });
+        });
+
+        // Unknown sentiment: call_sentiment4/5/6
+        let unknownHotQualified = 0;
+        let unknownForecastReady = 0;
+        leadsRows.forEach((l: any) => {
+            [l.call_sentiment4, l.call_sentiment5, l.call_sentiment6].forEach((v: any) => {
+                const val = (v || '').trim().toLowerCase();
+                if (val === 'hot / qualified') unknownHotQualified++;
+                else if (val === 'forecast / ready to buy') unknownForecastReady++;
+            });
+        });
 
         const allRows = [...ownerRows, ...nfRows];
         let normalized = allRows.map(normalizeRow);
@@ -193,7 +216,10 @@ export async function GET(req: Request) {
             costData: sortedDays.map(([name, obj]) => ({ name, value: obj.credits })),
             typesData: Array.from(typesMap.entries()).map(([name, value]) => ({ name, value })),
             ownerWaitingAvailabilityCount: ownerWaitingCount,
-            waitingAvailabilityCount: unknownWaitingCount
+            secondaryHotQualified,
+            secondaryForecastReady,
+            unknownHotQualified,
+            unknownForecastReady
         };
 
         return NextResponse.json(stats, {

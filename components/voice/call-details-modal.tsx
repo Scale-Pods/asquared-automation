@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Pause, Volume2, VolumeX, Phone, Clock, Calendar, ArrowRight, User, Copy, Check, FileText } from "lucide-react";
+import { Play, Pause, Volume2, VolumeX, Phone, Clock, Calendar, ArrowRight, User, Copy, Check, FileText, Link2 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -25,6 +25,7 @@ export function CallDetailsModal({ open, onOpenChange, call }: CallDetailsModalP
     const [fullCall, setFullCall] = useState<any>(null);
     const [localLoading, setLocalLoading] = useState(false);
     const [transcriptCopied, setTranscriptCopied] = useState(false);
+    const [linkCopied, setLinkCopied] = useState(false);
 
     const displayCall = fullCall || call || {};
 
@@ -261,6 +262,22 @@ export function CallDetailsModal({ open, onOpenChange, call }: CallDetailsModalP
             <DialogContent className="max-w-3xl p-0 gap-0 bg-white overflow-hidden max-h-[90vh] flex flex-col">
                 <DialogHeader className="p-6 border-b border-slate-100 flex flex-row items-center justify-between space-y-0">
                     <DialogTitle className="text-xl font-semibold">Call Details</DialogTitle>
+                    {displayCall?.id && (
+                        <button
+                            onClick={() => {
+                                const url = `${window.location.origin}/call/${displayCall.id}`;
+                                navigator.clipboard.writeText(url).then(() => {
+                                    setLinkCopied(true);
+                                    setTimeout(() => setLinkCopied(false), 2000);
+                                });
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-800 transition-colors border border-slate-200"
+                            title="Copy share link"
+                        >
+                            {linkCopied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Link2 className="h-3.5 w-3.5" />}
+                            {linkCopied ? 'Link copied!' : 'Share'}
+                        </button>
+                    )}
                 </DialogHeader>
 
                 <div className="flex-1 overflow-auto relative">
@@ -534,7 +551,7 @@ export function CallDetailsModal({ open, onOpenChange, call }: CallDetailsModalP
     );
 }
 
-function ModernAudioPlayer({ audioUrl, initialDuration = 0 }: { audioUrl: string, initialDuration?: number }) {
+export function ModernAudioPlayer({ audioUrl, initialDuration = 0 }: { audioUrl: string, initialDuration?: number }) {
     const audioRef = useRef<HTMLAudioElement>(null);
     const seekRef = useRef<HTMLDivElement>(null);
     const [isPlaying, setIsPlaying] = useState(false);

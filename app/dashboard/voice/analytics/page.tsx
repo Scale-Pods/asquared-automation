@@ -54,6 +54,7 @@ export default function VoiceAnalyticsPage() {
         ownerPickupRate: 0,
         ownerCompletionRate: 0,
         waitingAvailabilityCount: 0,
+        ownerWaitingAvailabilityCount: 0,
     });
 
     useEffect(() => {
@@ -94,6 +95,7 @@ export default function VoiceAnalyticsPage() {
                     ownerPickupRate: data.ownerPickupRate,
                     ownerCompletionRate: data.ownerCompletionRate,
                     waitingAvailabilityCount: data.waitingAvailabilityCount,
+                    ownerWaitingAvailabilityCount: data.ownerWaitingAvailabilityCount,
                 }));
                 setVolumeData(data.volumeData || []);
                 setDurationData(data.durationData || []);
@@ -238,8 +240,8 @@ export default function VoiceAnalyticsPage() {
                     />
                     <StatCard
                         title="Awaiting Availability"
-                        value={`${stats.ownersCalls > 0 ? ((stats.waitingAvailabilityCount / stats.ownersCalls) * 100).toFixed(1) : 0}%`}
-                        change={`${stats.waitingAvailabilityCount.toLocaleString()} / ${stats.ownersCalls.toLocaleString()} calls`}
+                        value={`${stats.ownersCalls > 0 ? ((stats.ownerWaitingAvailabilityCount / stats.ownersCalls) * 100).toFixed(1) : 0}%`}
+                        change={`${stats.ownerWaitingAvailabilityCount.toLocaleString()} / ${stats.ownersCalls.toLocaleString()} calls`}
                         icon={<CheckCircle className="h-5 w-5" />}
                         color="text-blue-600"
                         bg="bg-blue-50"

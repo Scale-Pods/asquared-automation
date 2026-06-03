@@ -9,7 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ASLoader } from "@/components/as-loader";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { CallDetailsModal } from "@/components/voice/call-details-modal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
@@ -144,12 +145,18 @@ const DynamicRowCells = ({ call, telephonyCost }: { call: any, telephonyCost?: n
 };
 
 export default function VoiceLogsPage() {
+    const searchParams = useSearchParams();
+    const router = useRouter();
+
     const [calls, setCalls] = useState<any[]>([]);
     const [totalCalls, setTotalCalls] = useState(0);
     const [loading, setLoading] = useState(false);
     const [selectedCall, setSelectedCall] = useState<any>(null);
     const [modalOpen, setModalOpen] = useState(false);
-    const [dateRange, setDateRange] = useState<any>(undefined);
+    const [dateRange, setDateRange] = useState<any>({
+        from: subDays(new Date(), 7),
+        to: new Date(),
+    });
     const [statusFilter, setStatusFilter] = useState("all");
     const [voiceStatusFilter, setVoiceStatusFilter] = useState("all");
     const [typeFilter, setTypeFilter] = useState("all");
@@ -161,13 +168,27 @@ export default function VoiceLogsPage() {
     const [phoneFilter, setPhoneFilter] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 10;
-    
+    const sharedCallHandled = useRef(false);
+
+    // Auto-open modal when ?call=<id> is in the URL
     useEffect(() => {
-        setDateRange({
-            from: subDays(new Date(), 7),
-            to: new Date(),
-        });
-    }, []);
+        const callId = searchParams.get("call");
+        if (!callId || sharedCallHandled.current) return;
+        sharedCallHandled.current = true;
+        fetch(`/api/calls/${callId}`)
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (data) {
+                    setSelectedCall(data);
+                    setModalOpen(true);
+                    // Remove the query param without a full navigation
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete("call");
+                    router.replace(url.pathname + (url.search || ""), { scroll: false });
+                }
+            })
+            .catch(() => {});
+    }, [searchParams]);
 
     const fetchLogs = async () => {
         setLoading(true);

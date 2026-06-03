@@ -342,21 +342,24 @@ export async function GET(req: Request) {
             }
             totalVoiceSeconds += calculateDuration(call);
         });
-        // --- Owner Stats (from master_leads, filtered by created_at with fallback to Last Contacted) ---
+        // --- Owner Stats (from master_leads, filtered by created_at) ---
         const masterLeadsFiltered = masterLeads.filter((o: any) => {
-            const d = new Date(o.created_at || o["Last Contacted"] || 0);
+            const d = new Date(o.created_at || 0);
             return isWithinRange(d, fromDate, toDate);
         });
         let totalOwnerLeads = masterLeadsFiltered.length;
         let ownerWhatsappReachouts = 0;
         let ownerTotalReplies = 0;
         let minOwnerWPDate: Date | null = null;
-        masterLeads.forEach((o: any) => {
+        let minOwnerLeadDate: Date | null = null;
+        masterLeadsFiltered.forEach((o: any) => {
+            const createdAt = new Date(o.created_at || 0);
+            if (!minOwnerLeadDate || createdAt < minOwnerLeadDate) minOwnerLeadDate = createdAt;
             const wp1 = o["Whatsapp 1"] || o["Whatsapp_1"];
             const wp2 = o["Whatsapp 2"] || o["Whatsapp_2"];
             const wp1Date = parseMsg(wp1).date;
             const wp2Date = parseMsg(wp2).date;
-            if ((wp1Date && isWithinRange(wp1Date, fromDate, toDate)) || (wp2Date && isWithinRange(wp2Date, fromDate, toDate))) {
+            if (wp1Date || wp2Date) {
                 ownerWhatsappReachouts++;
                 const d = wp1Date || wp2Date;
                 if (d && (!minOwnerWPDate || d < minOwnerWPDate)) minOwnerWPDate = d;
@@ -366,7 +369,7 @@ export async function GET(req: Request) {
             }
         });
         const formatLabel = (d: Date | null) => d ? `Since ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : "Real-time";
-        const ownerLeadsSince = totalOwnerLeads > 0 ? "Real-time" : "Real-time";
+        const ownerLeadsSince = formatLabel(minOwnerLeadDate);
         const ownerWhatsappSince = formatLabel(minOwnerWPDate);
         const ownerRepliesSince = ownerTotalReplies > 0 ? "Real-time" : "Real-time";
 

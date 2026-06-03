@@ -85,22 +85,22 @@ export async function GET(req: Request) {
         };
     };
 
-    const getCount = async (table: string, filter: string) => {
-        try {
-            const url = `${baseUrl}/${table}?select=count&limit=0&${filter}`;
-            const res = await fetch(url, { headers: { ...headers, "Prefer": "count=exact" }, cache: 'no-store' });
-            if (!res.ok) return 0;
-            const cr = res.headers.get("content-range");
-            return cr ? parseInt(cr.split('/')[1]) || 0 : 0;
-        } catch { return 0; }
-    };
-
     try {
-        const [ownerRows, nfRows, waitingCount] = await Promise.all([
+        const [ownerRows, nfRows] = await Promise.all([
             fetchTable(baseUrl, headers, 'vapi_call_logs', columns, dateFilter),
             fetchTable(baseUrl, headers, 'vapi_call_logs_nf', columns, dateFilter),
-            getCount("vapi_call_logs_nf", '"voice_call_status"=eq.Awaiting%20availability')
         ]);
+
+        // Count "Awaiting availability" directly from raw rows (case-insensitive, trimmed)
+        const isAwaiting = (row: any) =>
+            (row.voice_call_status || '').trim().toLowerCase() === 'awaiting availability';
+
+        const ownerWaitingCount = ownerRows.filter(
+            (r: any) => r.assistantId === OWNERS_ASSISTANT && isAwaiting(r)
+        ).length;
+        const unknownWaitingCount = nfRows.filter(
+            (r: any) => r.assistantId === UNKNOWN_ASSISTANT && isAwaiting(r)
+        ).length;
 
         const allRows = [...ownerRows, ...nfRows];
         let normalized = allRows.map(normalizeRow);
@@ -192,7 +192,8 @@ export async function GET(req: Request) {
             durationData: Object.entries(durationBuckets).map(([name, value]) => ({ name, value })),
             costData: sortedDays.map(([name, obj]) => ({ name, value: obj.credits })),
             typesData: Array.from(typesMap.entries()).map(([name, value]) => ({ name, value })),
-            waitingAvailabilityCount: waitingCount
+            ownerWaitingAvailabilityCount: ownerWaitingCount,
+            waitingAvailabilityCount: unknownWaitingCount
         };
 
         return NextResponse.json(stats, {

@@ -1,35 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
+async function tryVapi(id: string, privateKey: string): Promise<any | null> {
+    try {
+        const res = await fetch(`https://api.vapi.ai/call/${id}`, {
+            headers: { 'Authorization': `Bearer ${privateKey}` },
+        });
+        if (res.ok) return await res.json();
+    } catch {}
+    return null;
+}
 
 export async function GET(
-    request: NextRequest,
+    _request: NextRequest,
     context: { params: Promise<{ id: string }> }
 ) {
     try {
-        const apiKey = process.env.ELEVENLABS_API_KEY;
         const { id } = await context.params;
-        const conversationId = id;
+        const ownerKey  = process.env.VAPI_PRIVATE_KEY;
+        const normalKey = process.env.VAPI_NORMAL_LEADS_PRIVATE_KEY;
 
-        if (!apiKey) return NextResponse.json({ error: "Configuration error" }, { status: 500 });
+        let data: any = null;
+        for (const key of [ownerKey, normalKey].filter(Boolean) as string[]) {
+            data = await tryVapi(id, key);
+            if (data) break;
+        }
 
-        const response = await fetch(`${ELEVENLABS_BASE_URL}/convai/conversations/${conversationId}`, {
-            headers: { 'xi-api-key': apiKey }
-        });
+        if (!data) return NextResponse.json({ error: 'Call not found' }, { status: 404 });
 
-        if (!response.ok) throw new Error(`ElevenLabs error: ${response.status}`);
+        const messages: any[] = Array.isArray(data.messages) ? data.messages
+            : Array.isArray(data.transcript) ? data.transcript
+            : [];
 
-        const data = await response.json();
-
-        // ElevenLabs mentions tool calls in the transcript with specific roles
-        const executions = (data.transcript || []).filter((m: any) =>
+        const executions = messages.filter((m: any) =>
             m.role === 'tool' || m.role === 'function' || m.type === 'tool_call'
         );
 
         return NextResponse.json({ executions });
 
     } catch (error) {
-        console.error("Error fetching executions from ElevenLabs:", error);
-        return NextResponse.json({ error: "Failed to fetch executions" }, { status: 500 });
+        console.error('Error fetching executions:', error);
+        return NextResponse.json({ error: 'Failed to fetch executions' }, { status: 500 });
     }
 }

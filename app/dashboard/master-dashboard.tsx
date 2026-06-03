@@ -148,49 +148,7 @@ export default function MasterDashboard() {
                 <DateRangePicker onUpdate={handleDateUpdate} />
             </div>
 
-            {/* Source Table Breakdown - Secondary & Unknown */}
-            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                <CompactCard
-                    title="Secondary Intro"
-                    value={loading ? "..." : sourceStats.intro.toLocaleString()}
-                    subtitle="intro"
-                    icon={<Users className="h-5 w-5" />}
-                    color="text-blue-600"
-                    bg="bg-blue-50"
-                />
-                <CompactCard
-                    title="Unknown Intro"
-                    value={loading ? "..." : sourceStats.intro_uk.toLocaleString()}
-                    subtitle="intro_uk"
-                    icon={<Users className="h-5 w-5" />}
-                    color="text-sky-600"
-                    bg="bg-sky-50"
-                />
-                <CompactCard
-                    title="Secondary Follow Up"
-                    value={loading ? "..." : sourceStats.follow_up.toLocaleString()}
-                    subtitle="follow_up"
-                    icon={<MessageCircle className="h-5 w-5" />}
-                    color="text-purple-600"
-                    bg="bg-purple-50"
-                />
-                <CompactCard
-                    title="Unknown Follow Up"
-                    value={loading ? "..." : sourceStats.follow_up_uk.toLocaleString()}
-                    subtitle="follow_up_uk"
-                    icon={<MessageCircle className="h-5 w-5" />}
-                    color="text-violet-600"
-                    bg="bg-violet-50"
-                />
-                <CompactCard
-                    title="Leads"
-                    value={loading ? "..." : sourceStats.leads.toLocaleString()}
-                    subtitle="leads"
-                    icon={<Users className="h-5 w-5" />}
-                    color="text-emerald-600"
-                    bg="bg-emerald-50"
-                />
-            </div>
+           
 
             {/* Owner Leads Data Row */}
             <div>

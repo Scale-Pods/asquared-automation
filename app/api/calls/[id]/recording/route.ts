@@ -1,34 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
+async function tryVapi(id: string, privateKey: string): Promise<any | null> {
+    try {
+        const res = await fetch(`https://api.vapi.ai/call/${id}`, {
+            headers: { 'Authorization': `Bearer ${privateKey}` },
+        });
+        if (res.ok) return await res.json();
+    } catch {}
+    return null;
+}
 
 export async function GET(
-    request: NextRequest,
+    _request: NextRequest,
     context: { params: Promise<{ id: string }> }
 ) {
     try {
-        const apiKey = process.env.ELEVENLABS_API_KEY;
         const { id } = await context.params;
-        const conversationId = id;
+        const ownerKey  = process.env.VAPI_PRIVATE_KEY;
+        const normalKey = process.env.VAPI_NORMAL_LEADS_PRIVATE_KEY;
 
-        if (!apiKey) return NextResponse.json({ error: "Configuration error" }, { status: 500 });
+        let data: any = null;
+        for (const key of [ownerKey, normalKey].filter(Boolean) as string[]) {
+            data = await tryVapi(id, key);
+            if (data) break;
+        }
 
-        const response = await fetch(`${ELEVENLABS_BASE_URL}/convai/conversations/${conversationId}`, {
-            headers: { 'xi-api-key': apiKey }
-        });
+        if (!data) return NextResponse.json({ error: 'Call not found' }, { status: 404 });
 
-        if (!response.ok) throw new Error(`ElevenLabs error: ${response.status}`);
+        // Always route audio through our authenticated proxy endpoint
+        const recordingUrl = data.recordingUrl ? `/api/calls/${id}/audio` : null;
 
-        const data = await response.json();
-
-        // ElevenLabs doesn't always provide a direct audio URL in the main object
-        // If has_audio is true, we might need to point to a proxy or let the frontend know
-        return NextResponse.json({
-            recordingUrl: data.audio_url || (data.has_audio ? `/api/calls/${conversationId}/audio` : null)
-        });
+        return NextResponse.json({ recordingUrl });
 
     } catch (error) {
-        console.error("Error fetching recording info:", error);
-        return NextResponse.json({ error: "Failed to fetch recording" }, { status: 500 });
+        console.error('Error fetching recording info:', error);
+        return NextResponse.json({ error: 'Failed to fetch recording' }, { status: 500 });
     }
 }

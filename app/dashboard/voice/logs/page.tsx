@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ASLoader } from "@/components/as-loader";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { CallDetailsModal } from "@/components/voice/call-details-modal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -144,7 +144,7 @@ const DynamicRowCells = ({ call, telephonyCost }: { call: any, telephonyCost?: n
     );
 };
 
-export default function VoiceLogsPage() {
+function VoiceLogsContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
 
@@ -543,6 +543,14 @@ export default function VoiceLogsPage() {
                 </DialogContent>
             </Dialog>
         </div>
+    );
+}
+
+export default function VoiceLogsPage() {
+    return (
+        <Suspense>
+            <VoiceLogsContent />
+        </Suspense>
     );
 }
 

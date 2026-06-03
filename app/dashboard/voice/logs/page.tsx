@@ -196,15 +196,12 @@ function VoiceLogsContent() {
             const params = new URLSearchParams();
             if (dateRange?.from) params.set('from', dateRange.from.toISOString());
             if (dateRange?.to) params.set('to', dateRange.to.toISOString());
-            if (accountFilter !== 'vapi') params.set('account', accountFilter);
+            params.set('account', accountFilter === 'vapi' ? 'all' : accountFilter);
             if (statusFilter !== 'all') params.set('status', statusFilter);
             if (voiceStatusFilter !== 'all') params.set('voiceStatus', voiceStatusFilter);
             if (typeFilter !== 'all') params.set('type', typeFilter);
             if (phoneFilter) params.set('search', phoneFilter);
-            if (sortBy !== 'newest') {
-                params.set('sort', sortBy);
-                params.set('order', sortBy === 'oldest' ? 'asc' : 'desc');
-            }
+            params.set('sort', sortBy);
             params.set('page', String(currentPage));
             params.set('pageSize', String(itemsPerPage));
 

@@ -43,7 +43,6 @@ export async function GET(req: Request) {
     const typeFilter = searchParams.get('type') || 'all';
     const search = searchParams.get('search') || '';
     const sort = searchParams.get('sort') || 'newest';
-    const order = searchParams.get('order') || 'desc';
     const pageParam = searchParams.get('page');
     const pageSizeParam = searchParams.get('pageSize');
 
@@ -216,18 +215,13 @@ export async function GET(req: Request) {
             });
         }
 
-        const sortDir = order === 'asc' ? 1 : -1;
         calls.sort((a, b) => {
-            if (sort === 'longest') return ((b.durationSeconds || 0) - (a.durationSeconds || 0)) * (sortDir > 0 ? 1 : 1);
-            if (sort === 'shortest') return ((a.durationSeconds || 0) - (b.durationSeconds || 0)) * (sortDir > 0 ? 1 : 1);
-            if (sort === 'oldest') {
-                const ta = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-                const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-                return (ta - tb) * sortDir;
-            }
+            if (sort === 'longest') return (b.durationSeconds || 0) - (a.durationSeconds || 0);
+            if (sort === 'shortest') return (a.durationSeconds || 0) - (b.durationSeconds || 0);
             const ta = a.startedAt ? new Date(a.startedAt).getTime() : 0;
             const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-            return (tb - ta) * sortDir;
+            // oldest = ascending (ta - tb), newest = descending (tb - ta)
+            return sort === 'oldest' ? ta - tb : tb - ta;
         });
 
         const total = calls.length;

@@ -171,6 +171,7 @@ export default function VoiceAnalyticsPage() {
                     <SentimentCard
                         hotQualified={stats.secondaryHotQualified}
                         forecastReady={stats.secondaryForecastReady}
+                        totalCalls={stats.secondaryCalls}
                     />
                 </div>
             </div>
@@ -208,6 +209,7 @@ export default function VoiceAnalyticsPage() {
                     <SentimentCard
                         hotQualified={stats.unknownHotQualified}
                         forecastReady={stats.unknownForecastReady}
+                        totalCalls={stats.unknownCalls}
                     />
                 </div>
             </div>
@@ -298,20 +300,32 @@ export default function VoiceAnalyticsPage() {
     );
 }
 
-function SentimentCard({ hotQualified, forecastReady }: { hotQualified: number; forecastReady: number }) {
+function SentimentCard({ hotQualified, forecastReady, totalCalls }: { hotQualified: number; forecastReady: number; totalCalls: number }) {
     const total = hotQualified + forecastReady;
+    const rate = totalCalls > 0 ? ((total / totalCalls) * 100).toFixed(1) : '0.0';
+    const hotRate = totalCalls > 0 ? ((hotQualified / totalCalls) * 100).toFixed(1) : '0.0';
+    const forecastRate = totalCalls > 0 ? ((forecastReady / totalCalls) * 100).toFixed(1) : '0.0';
     return (
         <Card className="border-slate-200">
             <CardContent className="p-6">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-tighter mb-3">Positive Response Rate</p>
+                <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-tighter">Positive Response Rate</p>
+                    <span className="text-lg font-bold text-emerald-600">{rate}%</span>
+                </div>
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">Hot / Qualified</span>
-                        <span className="text-lg font-bold text-slate-900">{hotQualified.toLocaleString()}</span>
+                        <div className="text-right">
+                            <span className="text-sm font-bold text-slate-900">{hotQualified.toLocaleString()}</span>
+                            <span className="text-xs text-slate-400 ml-1.5">({hotRate}%)</span>
+                        </div>
                     </div>
                     <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">Forecast / Ready To Buy</span>
-                        <span className="text-lg font-bold text-slate-900">{forecastReady.toLocaleString()}</span>
+                        <div className="text-right">
+                            <span className="text-sm font-bold text-slate-900">{forecastReady.toLocaleString()}</span>
+                            <span className="text-xs text-slate-400 ml-1.5">({forecastRate}%)</span>
+                        </div>
                     </div>
                     <div className="pt-1 border-t border-slate-100 flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total</span>

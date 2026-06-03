@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay, subDays } from 'date-fns';
-import { processReplyLeads } from '@/lib/server-parsers';
+import { processReplyLeads, fetchAllRows } from '@/lib/server-parsers';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,34 +57,6 @@ function isWithinRange(d: Date | null, fromDate: Date | null, toDate: Date | nul
     return dStr >= fStr && dStr <= tStr;
 }
 
-function getLeadLatestWPActivity(lead: any, parseFn: typeof parseMsg, parseWP: typeof parseWPStamp): Date {
-    const wp1Ts = lead["W.P_1 TS"];
-    const wp1Parsed = parseWP(wp1Ts);
-    if (wp1Parsed) return wp1Parsed;
-    let latest = new Date(lead.created_at);
-    const stageData = lead.stage_data || {};
-    const getD = (raw: any) => parseFn(raw).date;
-    for (let i = 1; i <= 12; i++) {
-        let d = getD(lead[`W.P_${i}`] || stageData[`WhatsApp ${i}`]);
-        const tsRaw = lead[`W.P_${i} TS`];
-        if (!d && tsRaw && tsRaw.includes(' - ')) {
-            const tsDate = parseWP(tsRaw);
-            if (tsDate) d = tsDate;
-        }
-        if (d && d > latest) latest = d;
-    }
-    const rd = getD(lead.whatsapp_replied || stageData["WhatsApp Replied"]);
-    if (rd && rd > latest) latest = rd;
-    const fd = getD(lead["W.P_FollowUp"] || stageData["WhatsApp FollowUp"]);
-    if (fd && fd > latest) latest = fd;
-    for (let i = 1; i <= 10; i++) {
-        const d1 = getD(lead[`W.P_Replied_${i}`]);
-        if (d1 && d1 > latest) latest = d1;
-        const d2 = getD(lead[`W.P_FollowUp_${i}`]);
-        if (d2 && d2 > latest) latest = d2;
-    }
-    return latest;
-}
 
 function calculateDuration(call: any): number {
     return call.duration_seconds || call.durationSeconds || 0;
@@ -95,54 +67,6 @@ function formatDuration(totalSeconds: number): string {
     const mins = Math.floor((totalSeconds % 3600) / 60);
     if (hrs > 0) return `${hrs}h ${mins}m`;
     return `${mins}m`;
-}
-
-async function fetchAllRows(baseUrl: string, headers: Record<string, string>, table: string, dateColumn: string | null, from: string | null, to: string | null): Promise<any[]> {
-    const PAGE_SIZE = 2000;
-    let allData: any[] = [];
-    let offset = 0;
-    while (true) {
-        let url = `${baseUrl}/${table}?select=*&offset=${offset}&limit=${PAGE_SIZE}`;
-        if (dateColumn && from) url += `&%22${dateColumn}%22=gte.${from}`;
-        if (dateColumn && to) url += `&%22${dateColumn}%22=lte.${to}`;
-        try {
-            const res = await fetch(url, { headers, cache: 'no-store' });
-            if (!res.ok) { console.error(`fetchAllRows: ${table} returned ${res.status} for URL ${url}`); break; }
-            const data = await res.json();
-            if (!Array.isArray(data) || data.length === 0) break;
-            allData = allData.concat(data);
-            if (data.length < PAGE_SIZE) break;
-            offset += PAGE_SIZE;
-        } catch (e) { console.error(`fetchAllRows: ${table} threw`, e); break; }
-    }
-    return allData;
-}
-
-async function fetchAllRowsWithDateParts(baseUrl: string, headers: Record<string, string>, table: string, dateColumn: string, from: string | null, to: string | null): Promise<any[]> {
-    const PAGE_SIZE = 2000;
-    let allData: any[] = [];
-    let offset = 0;
-    while (true) {
-        let url = `${baseUrl}/${table}?select=*&offset=${offset}&limit=${PAGE_SIZE}`;
-        if (from) url += `&%22${dateColumn}%22=gte.${from}`;
-        if (to) {
-            const endDate = new Date(to);
-            if (endDate.getUTCHours() === 0 && endDate.getUTCMinutes() === 0 && endDate.getUTCSeconds() === 0) {
-                endDate.setUTCHours(23, 59, 59, 999);
-            }
-            url += `&%22${dateColumn}%22=lte.${endDate.toISOString()}`;
-        }
-        try {
-            const res = await fetch(url, { headers, cache: 'no-store' });
-            if (!res.ok) { console.error(`fetchAllRowsWithDateParts: ${table} returned ${res.status} for URL ${url}`); break; }
-            const data = await res.json();
-            if (!Array.isArray(data) || data.length === 0) break;
-            allData = allData.concat(data);
-            if (data.length < PAGE_SIZE) break;
-            offset += PAGE_SIZE;
-        } catch (e) { console.error(`fetchAllRowsWithDateParts: ${table} threw`, e); break; }
-    }
-    return allData;
 }
 
 export async function GET(req: Request) {
@@ -168,7 +92,6 @@ export async function GET(req: Request) {
         const fromDate = from ? startOfDay(new Date(from)) : null;
         const toDate = to ? endOfDay(new Date(to)) : null;
 
-        // Fetch ALL data (date filtering done in JS via created_at to match original client behavior)
         const [
             leadsRows,
             masterLeads,
@@ -181,37 +104,24 @@ export async function GET(req: Request) {
             nurtureLeadsRows,
             nurtureLeadsUkRows,
         ] = await Promise.all([
-            fetchAllRows(baseUrl, headers, "leads", null, null, null),
-            fetchAllRows(baseUrl, headers, "master_leads", null, null, null),
-            fetchAllRowsWithDateParts(baseUrl, headers, "intro", "WP_last_contacted", null, null),
-            fetchAllRowsWithDateParts(baseUrl, headers, "intro_uk", "WP_last_contacted", null, null),
-            fetchAllRowsWithDateParts(baseUrl, headers, "follow_up", "WP_last_contacted", null, null),
-            fetchAllRowsWithDateParts(baseUrl, headers, "follow_up_uk", "WP_last_contacted", null, null),
-            fetchAllRowsWithDateParts(baseUrl, headers, "vapi_call_logs", "created_at", from, to),
-            fetchAllRowsWithDateParts(baseUrl, headers, "vapi_call_logs_nf", "created_at", from, to),
-            fetchAllRowsWithDateParts(baseUrl, headers, "nurture_leads", "created_at", from, to),
-            fetchAllRowsWithDateParts(baseUrl, headers, "nurture_leads_uk", "created_at", from, to),
+            fetchAllRows(baseUrl, headers, "leads", "created_at", from, to),
+            fetchAllRows(baseUrl, headers, "master_leads", "created_at", from, to),
+            fetchAllRows(baseUrl, headers, "intro", null, from, to),
+            fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
+            fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
+            fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to),
+            fetchAllRows(baseUrl, headers, "vapi_call_logs", "created_at", from, to),
+            fetchAllRows(baseUrl, headers, "vapi_call_logs_nf", "created_at", from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads", "created_at", from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads_uk", "created_at", from, to),
         ]);
 
         const allCalls = [...allCallsRaw, ...allCallsNf];
 
-        // Combine all normal leads
-        const allLeads = [...leadsRows, ...introRows, ...introUkRows, ...followUpRows, ...followUpUkRows];
+        // Normal contact tables (intro/follow_up variants) — no server-side date filter
+        const normalContactRows = [...introRows, ...introUkRows, ...followUpRows, ...followUpUkRows];
 
-        // Helper to check if a lead is from a "normal" loop (not master)
-        const isNormalLoop = (l: any) => {
-            const sl = l.source_loop || "";
-            return sl !== "Master Leads" && sl !== "Master";
-        };
-
-        // Filter leads by created_at date range
-        const filteredByCreated = allLeads.filter((l: any) => {
-            if (!fromDate || !toDate) return true;
-            const d = new Date(l.created_at || 0);
-            return isWithinRange(d, fromDate, toDate);
-        });
-
-        // --- Acquisition Chart ---
+        // --- Acquisition Chart (based on leads.created_at, already server-filtered) ---
         const acquisitionMap: Record<string, number> = {};
         let startDate = fromDate ? new Date(fromDate) : subDays(new Date(), 7);
         let endDate = toDate ? new Date(toDate) : new Date();
@@ -224,31 +134,24 @@ export async function GET(req: Request) {
             acquisitionMap[dateStr] = 0;
             current.setDate(current.getDate() + 1);
         }
-        filteredByCreated.forEach((lead: any) => {
+        leadsRows.forEach((lead: any) => {
             const date = new Date(lead.created_at || Date.now());
             const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             if (acquisitionMap[dateStr] !== undefined) acquisitionMap[dateStr]++;
         });
         const acquisitionChartData = Object.entries(acquisitionMap).map(([name, leads]) => ({ name, leads }));
 
-        // --- Total normal leads ---
-        const normalLeads = allLeads.filter((l: any) => isNormalLoop(l) && isWithinRange(new Date(l.created_at || 0), fromDate, toDate));
-        const normalLeadsCount = normalLeads.length;
+        // --- Total Leads: count of leads table rows (already server-filtered by created_at) ---
+        const normalLeadsCount = leadsRows.length;
 
-        // Oldest lead date
-        let oldestLeadDate = "Real-time";
-        if (normalLeads.length > 0) {
-            const oldest = normalLeads.reduce((min: Date, lead: any) => {
-                const d = new Date(lead.created_at);
-                return d < min ? d : min;
-            }, new Date(normalLeads[0].created_at));
-            oldestLeadDate = `Since ${oldest.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-        }
+        const oldestLeadDate = leadsRows.length > 0
+            ? `Since ${leadsRows.reduce((min: Date, l: any) => { const d = new Date(l.created_at); return d < min ? d : min; }, new Date(leadsRows[0].created_at)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+            : "Real-time";
 
-        // --- Total Emails Sent ---
+        // --- Total Emails Sent (from intro/follow_up contact rows) ---
         let emailCount = 0;
         const emailDates: Date[] = [];
-        allLeads.forEach((lead: any) => {
+        normalContactRows.forEach((lead: any) => {
             const stages = lead.stages_passed || [];
             const stageData = lead.stage_data || {};
             stages.forEach((stage: string) => {
@@ -265,52 +168,90 @@ export async function GET(req: Request) {
             ? `Since ${emailDates.reduce((min, d) => d < min ? d : min).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
             : "Real-time";
 
-        // --- Total WhatsApp Reachouts ---
-        let whatsappReachouts = 0;
-        const wpDates: Date[] = [];
-        allLeads.forEach((lead: any) => {
-            if (!isNormalLoop(lead)) return;
+        // Parses nurture TS strings like "READ at Jun 02 2026, 08:05 PM"
+        const parseNurtureTS = (raw: any): Date | null => {
+            if (!raw) return null;
+            const s = String(raw).trim();
+            // ISO timestamp (e.g. from timestamptz column direct value)
+            const iso = new Date(s);
+            if (!isNaN(iso.getTime())) return iso;
+            // "READ at Jun 02 2026, 08:05 PM" — strip leading word+at
+            const m = s.match(/at\s+([A-Za-z]+\s+\d{1,2}\s+\d{4},?\s+\d{1,2}:\d{2}\s*[AP]M)/i);
+            if (m) { const d = new Date(m[1].replace(',', '')); if (!isNaN(d.getTime())) return d; }
+            return null;
+        };
+
+        // Resolve reachout date for normal contact rows:
+        // 1. ISO date embedded in W.P_1 content  2. W.P_1 TS stamp ("Read - DD/MM/YYYY")  3. created_at
+        const resolveNormalWPDate = (lead: any): Date | null => {
             const wp1Val = lead["W.P_1"];
-            if (!wp1Val || wp1Val === "" || wp1Val === "No") return;
-            const trimmed = String(wp1Val).trim();
-            let reachoutDate: Date | null = null;
-            const dObj = new Date(trimmed);
-            if (!isNaN(dObj.getTime()) && (trimmed.includes('T') || (trimmed.includes('-') && trimmed.includes(':')))) {
-                reachoutDate = dObj;
-            } else {
-                reachoutDate = parseMsg(trimmed).date;
+            if (!wp1Val || wp1Val === "" || String(wp1Val).toLowerCase() === "no") return null;
+            return (
+                parseMsg(wp1Val).date ||
+                parseWPStamp(lead["W.P_1 TS"]) ||
+                (lead.created_at ? new Date(lead.created_at) : null)
+            );
+        };
+
+        // Per-table reachout counts for detailed subtitle
+        let wpIntro = 0, wpIntroUk = 0, wpFollowUp = 0, wpFollowUpUk = 0;
+        introRows.forEach((l: any)     => { const d = resolveNormalWPDate(l); if (d && isWithinRange(d, fromDate, toDate)) wpIntro++; });
+        introUkRows.forEach((l: any)   => { const d = resolveNormalWPDate(l); if (d && isWithinRange(d, fromDate, toDate)) wpIntroUk++; });
+        followUpRows.forEach((l: any)  => { const d = resolveNormalWPDate(l); if (d && isWithinRange(d, fromDate, toDate)) wpFollowUp++; });
+        followUpUkRows.forEach((l: any)=> { const d = resolveNormalWPDate(l); if (d && isWithinRange(d, fromDate, toDate)) wpFollowUpUk++; });
+
+        const NURTURE_WP1_PAIRS = [
+            ['week1_wp_1', 'week1_wp_1_ts'],
+            ['week2_wp_1', 'week2_wp_1_ts'],
+            ['week3_wp_1', 'week3_wp_1_ts'],
+        ] as const;
+
+        // Resolve reachout date for nurture rows:
+        // 1. _ts column (ISO or "READ at ...") 2. created_at
+        const resolveNurtureWPDate = (l: any): Date | null => {
+            for (const [wpCol, tsCol] of NURTURE_WP1_PAIRS) {
+                if (!l[wpCol] || String(l[wpCol]).trim() === '') continue;
+                const d = parseNurtureTS(l[tsCol]) || (l.created_at ? new Date(l.created_at) : null);
+                if (d && !isNaN(d.getTime())) return d;
             }
-            if (!reachoutDate) {
-                const wp1Ts = lead["W.P_1 TS"];
-                reachoutDate = parseWPStamp(wp1Ts);
-            }
-            if (reachoutDate && isWithinRange(reachoutDate, fromDate, toDate)) {
-                whatsappReachouts++;
-                wpDates.push(reachoutDate);
-            }
-        });
-        const oldestWPDate = wpDates.length > 0
-            ? `Since ${wpDates.reduce((min, d) => d < min ? d : min).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+            return null;
+        };
+
+        let wpNurture = 0, wpNurtureUk = 0;
+        nurtureLeadsRows.forEach((l: any)   => { const d = resolveNurtureWPDate(l); if (d && isWithinRange(d, fromDate, toDate)) wpNurture++; });
+        nurtureLeadsUkRows.forEach((l: any) => { const d = resolveNurtureWPDate(l); if (d && isWithinRange(d, fromDate, toDate)) wpNurtureUk++; });
+
+        const whatsappReachouts = wpIntro + wpIntroUk + wpFollowUp + wpFollowUpUk;
+        const nurtureWpReachouts = wpNurture;
+        const nurtureUkWpReachouts = wpNurtureUk;
+
+        // Subtitle: "intro:X | intro_uk:Y | follow_up:Z | follow_up_uk:W | nurture:A | nurture_uk:B"
+        const wpSubtitle = `intro:${wpIntro} | intro_uk:${wpIntroUk} | follow_up:${wpFollowUp} | follow_up_uk:${wpFollowUpUk} | nurture:${wpNurture} | nurture_uk:${wpNurtureUk}`;
+
+        const allWpDates: Date[] = [];
+        normalContactRows.forEach((l: any) => { const d = resolveNormalWPDate(l); if (d && isWithinRange(d, fromDate, toDate)) allWpDates.push(d); });
+        [...nurtureLeadsRows, ...nurtureLeadsUkRows].forEach((l: any) => { const d = resolveNurtureWPDate(l); if (d && isWithinRange(d, fromDate, toDate)) allWpDates.push(d); });
+
+        const oldestWPDate = allWpDates.length > 0
+            ? `Since ${allWpDates.reduce((min, d) => d < min ? d : min).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
             : "Real-time";
 
-        // --- Total Replies ---
+        // --- Total Replies (from normal contact rows, date-filtered by WP_Replied_track) ---
         let totalReplies = 0;
         const replyLeads: any[] = [];
-        allLeads.forEach((lead: any) => {
-            if (!isNormalLoop(lead)) return;
+        normalContactRows.forEach((lead: any) => {
             const replyVal = lead["WP_Replied_track"];
-            if (replyVal && replyVal !== "" && String(replyVal).toLowerCase() !== "no") {
-                const parsed = parseMsg(replyVal);
-                let isRepliedInRange = false;
-                if (parsed.date) {
-                    if (isWithinRange(parsed.date, fromDate, toDate)) isRepliedInRange = true;
-                } else if (String(replyVal).toLowerCase() === "yes" || String(replyVal).toLowerCase() === "replied") {
-                    if (isWithinRange(new Date(lead.created_at), fromDate, toDate)) isRepliedInRange = true;
-                }
-                if (isRepliedInRange) {
-                    totalReplies++;
-                    replyLeads.push(lead);
-                }
+            if (!replyVal || replyVal === "" || String(replyVal).toLowerCase() === "no") return;
+            const parsed = parseMsg(replyVal);
+            let isRepliedInRange = false;
+            if (parsed.date) {
+                if (isWithinRange(parsed.date, fromDate, toDate)) isRepliedInRange = true;
+            } else if (String(replyVal).toLowerCase() === "yes" || String(replyVal).toLowerCase() === "replied") {
+                if (isWithinRange(new Date(lead.created_at), fromDate, toDate)) isRepliedInRange = true;
+            }
+            if (isRepliedInRange) {
+                totalReplies++;
+                replyLeads.push(lead);
             }
         });
 
@@ -346,17 +287,13 @@ export async function GET(req: Request) {
             }
             totalVoiceSeconds += calculateDuration(call);
         });
-        // --- Owner Stats (from master_leads, filtered by created_at) ---
-        const masterLeadsFiltered = masterLeads.filter((o: any) => {
-            const d = new Date(o.created_at || 0);
-            return isWithinRange(d, fromDate, toDate);
-        });
-        let totalOwnerLeads = masterLeadsFiltered.length;
+        // --- Owner Stats (master_leads already server-filtered by created_at) ---
+        let totalOwnerLeads = masterLeads.length;
         let ownerWhatsappReachouts = 0;
         let ownerTotalReplies = 0;
         let minOwnerWPDate: Date | null = null;
         let minOwnerLeadDate: Date | null = null;
-        masterLeadsFiltered.forEach((o: any) => {
+        masterLeads.forEach((o: any) => {
             const createdAt = new Date(o.created_at || 0);
             if (!minOwnerLeadDate || createdAt < minOwnerLeadDate) minOwnerLeadDate = createdAt;
             const wp1 = o["Whatsapp 1"] || o["Whatsapp_1"];
@@ -382,45 +319,34 @@ export async function GET(req: Request) {
         const unknownVoiceDurationString = formatDuration(unknownVoiceSeconds);
         const ownerVoiceDurationString = formatDuration(ownerVoiceSeconds);
 
-        // --- Nurture Leads (Secondary) stats ---
-        const WP_COLS = [
-            'week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
-            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
-            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4',
-        ];
+        // --- Nurture Leads stats (WP reachouts already computed above) ---
+        const nurtureLeadsCount = nurtureLeadsRows.length;
+        const nurtureReplies = nurtureLeadsRows.filter((l: any) =>
+            l.wp_replied_track && String(l.wp_replied_track).trim() !== ''
+        ).length;
 
-        let nurtureLeadsCount = 0;
-        let nurtureWpReachouts = 0;
-        let nurtureReplies = 0;
-        let minNurtureDate: Date | null = null;
-        nurtureLeadsRows.forEach((l: any) => {
-            nurtureLeadsCount++;
+        const nurtureUkLeadsCount = nurtureLeadsUkRows.length;
+        const nurtureUkReplies = nurtureLeadsUkRows.filter((l: any) =>
+            l.wp_replied_track && String(l.wp_replied_track).trim() !== ''
+        ).length;
+
+        const minNurtureDate = nurtureLeadsRows.reduce((min: Date | null, l: any) => {
             const d = new Date(l.created_at || 0);
-            if (!minNurtureDate || d < minNurtureDate) minNurtureDate = d;
-            if (WP_COLS.some((col: string) => l[col] && String(l[col]).trim() !== '')) nurtureWpReachouts++;
-            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureReplies++;
-        });
-
-        // --- Nurture Leads UK (Unknown) stats ---
-        let nurtureUkLeadsCount = 0;
-        let nurtureUkWpReachouts = 0;
-        let nurtureUkReplies = 0;
-        let minNurtureUkDate: Date | null = null;
-        nurtureLeadsUkRows.forEach((l: any) => {
-            nurtureUkLeadsCount++;
+            return !min || d < min ? d : min;
+        }, null as Date | null);
+        const minNurtureUkDate = nurtureLeadsUkRows.reduce((min: Date | null, l: any) => {
             const d = new Date(l.created_at || 0);
-            if (!minNurtureUkDate || d < minNurtureUkDate) minNurtureUkDate = d;
-            if (WP_COLS.some((col: string) => l[col] && String(l[col]).trim() !== '')) nurtureUkWpReachouts++;
-            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureUkReplies++;
-        });
+            return !min || d < min ? d : min;
+        }, null as Date | null);
 
-        const nurtureSince    = formatLabel(minNurtureDate);
-        const nurtureUkSince  = formatLabel(minNurtureUkDate);
+        const nurtureSince   = formatLabel(minNurtureDate);
+        const nurtureUkSince = formatLabel(minNurtureUkDate);
 
         const response = {
             normalLeadsCount,
             emailCount,
             whatsappReachouts,
+            wpSubtitle,
             totalVoiceCalls,
             secondaryVoiceCalls,
             unknownVoiceCalls,

@@ -40,6 +40,7 @@ interface AnalyticsResponse {
     normalLeadsCount: number;
     emailCount: number;
     whatsappReachouts: number;
+    wpSubtitle?: string;
     totalVoiceCalls: number;
     secondaryVoiceCalls: number;
     unknownVoiceCalls: number;
@@ -216,7 +217,7 @@ export default function MasterDashboard() {
                     <CompactCard
                         title="Total Leads"
                         value={loading ? "..." : ((s?.normalLeadsCount ?? 0) + (s?.nurtureLeadsCount ?? 0) + (s?.nurtureUkLeadsCount ?? 0)).toLocaleString()}
-                        subtitle={`${(s?.normalLeadsCount ?? 0).toLocaleString()} normal | ${((s?.nurtureLeadsCount ?? 0) + (s?.nurtureUkLeadsCount ?? 0)).toLocaleString()} nurture`}
+                        subtitle={`leads:${(s?.normalLeadsCount ?? 0)} | nurture:${(s?.nurtureLeadsCount ?? 0)} | nurture_uk:${(s?.nurtureUkLeadsCount ?? 0)}`}
                         icon={<Users className="h-5 w-5" />}
                         color="text-indigo-600"
                         bg="bg-indigo-50"
@@ -224,7 +225,7 @@ export default function MasterDashboard() {
                     <CompactCard
                         title="WhatsApp Reachouts"
                         value={loading ? "..." : ((s?.whatsappReachouts ?? 0) + (s?.nurtureWpReachouts ?? 0) + (s?.nurtureUkWpReachouts ?? 0)).toLocaleString()}
-                        subtitle={`${(s?.whatsappReachouts ?? 0).toLocaleString()} normal | ${((s?.nurtureWpReachouts ?? 0) + (s?.nurtureUkWpReachouts ?? 0)).toLocaleString()} nurture`}
+                        subtitle={s?.wpSubtitle ?? ""}
                         icon={<MessageCircle className="h-5 w-5" />}
                         color="text-purple-600"
                         bg="bg-purple-50"
@@ -240,7 +241,7 @@ export default function MasterDashboard() {
                     <CompactCard
                         title="Total Replies"
                         value={loading ? "..." : ((s?.totalReplies ?? 0) + (s?.nurtureReplies ?? 0) + (s?.nurtureUkReplies ?? 0)).toLocaleString()}
-                        subtitle={`${(s?.totalReplies ?? 0).toLocaleString()} normal | ${((s?.nurtureReplies ?? 0) + (s?.nurtureUkReplies ?? 0)).toLocaleString()} nurture`}
+                        subtitle={`intro+follow_up:${(s?.totalReplies ?? 0)} | nurture:${(s?.nurtureReplies ?? 0)} | nurture_uk:${(s?.nurtureUkReplies ?? 0)}`}
                         icon={<Expand className="h-5 w-5" />}
                         color="text-indigo-600"
                         bg="bg-indigo-50"

@@ -1,55 +1,103 @@
 import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay } from 'date-fns';
 import { parseMsg, parseTSDate, getMsgDateWithFallback, isWithinRange, fetchAllRows } from '@/lib/server-parsers';
+import { consolidateLeads, RawLeadsResponse } from '@/lib/leads-utils';
 
 export const dynamic = 'force-dynamic';
 
-function getLeadLatestActivity(lead: any): Date {
-    const wp1Ts = lead["W.P_1 TS"];
-    if (wp1Ts && wp1Ts.includes(' - ')) {
-        const parts = wp1Ts.split(' - ');
-        const datePart = parts[parts.length - 1].trim();
-        const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (match) {
-            const d = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-            if (!isNaN(d.getTime())) return d;
-        }
+function getMsgDate(raw: any): Date | null {
+    if (!raw || !String(raw).trim()) return null;
+    const content = String(raw).trim();
+    const isoRegex = /\n\n(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.+)$/;
+    const isoMatch = content.match(isoRegex);
+    if (isoMatch) return new Date(isoMatch[1]);
+    const lines = content.split('\n');
+    const lastLine = lines[lines.length - 1].trim();
+    const lastLineDate = new Date(lastLine.replace(' ', 'T'));
+    if (lines.length > 1 && !isNaN(lastLineDate.getTime()) && lastLine.includes('-') && lastLine.includes(':')) {
+        return lastLineDate;
     }
+    return null;
+}
 
-    let latest = new Date(lead.updated_at || lead.created_at);
-    const stageData = lead.stage_data || {};
-    const getD = (raw: any) => parseMsg(raw).date;
-    for (let i = 1; i <= 12; i++) {
-        let d = getD(lead[`W.P_${i}`] || stageData[`WhatsApp ${i}`]);
-        const tsRaw = lead[`W.P_${i} TS`];
-        if (!d && tsRaw && tsRaw.includes(' - ')) {
-            const parts = tsRaw.split(' - ');
-            const datePart = parts[parts.length - 1].trim();
-            const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-            if (match) {
-                const tsDate = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-                if (!isNaN(tsDate.getTime())) {
-                    const rawLower = tsRaw.toLowerCase();
-                    if (rawLower.includes('read') || rawLower.includes('delivered') || rawLower.includes('failed')) {
-                        tsDate.setHours(0, 0, 0, 0);
-                    }
-                    d = tsDate;
-                }
-            }
+function parseNurtureTS(raw: any): Date | null {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    const iso = new Date(s);
+    if (!isNaN(iso.getTime())) return iso;
+    const m = s.match(/at\s+([A-Za-z]+\s+\d{1,2}\s+\d{4},?\s+\d{1,2}:\d{2}\s*[AP]M)/i);
+    if (m) { const d = new Date(m[1].replace(',', '')); if (!isNaN(d.getTime())) return d; }
+    return null;
+}
+
+const NURTURE_WP_COLS = [
+    'week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+    'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+    'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4',
+];
+const NURTURE_WP_TS_COLS = [
+    'week1_wp_1_ts','week1_wp_2_ts','week1_wp_3_ts','week1_wp_4_ts',
+    'week2_wp_1_ts','week2_wp_2_ts','week2_wp_3_ts','week2_wp_4_ts',
+    'week3_wp_1_ts','week3_wp_2_ts','week3_wp_3_ts','week3_wp_4_ts',
+];
+
+const getNurtureFirstContactDate = (l: any): Date | null => {
+    const firstTs = l['week1_wp_1_ts'];
+    if (firstTs) {
+        const d = parseNurtureTS(firstTs);
+        if (d && !isNaN(d.getTime())) return d;
+    }
+    for (const tsCol of NURTURE_WP_TS_COLS) {
+        const ts = l[tsCol];
+        if (ts) { const d = parseNurtureTS(ts); if (d && !isNaN(d.getTime())) return d; }
+    }
+    const legacyTs = l.wp_last_contacted || l.last_contacted;
+    if (legacyTs) { const d = new Date(legacyTs); if (!isNaN(d.getTime())) return d; }
+    for (const col of NURTURE_WP_COLS) {
+        if (l[col] && String(l[col]).trim() !== '') {
+            const d = new Date(l.created_at || 0);
+            return isNaN(d.getTime()) ? null : d;
         }
-        if (d && d > latest) latest = d;
     }
-    const rd = getD(lead.whatsapp_replied || stageData["WhatsApp Replied"]);
-    if (rd && rd > latest) latest = rd;
-    const fd = getD(lead["W.P_FollowUp"] || stageData["WhatsApp FollowUp"]);
-    if (fd && fd > latest) latest = fd;
+    return null;
+};
+
+const getNurtureReplyDate = (l: any): Date | null => {
+    const rTrack = l.wp_replied_track;
+    if (!rTrack || String(rTrack).trim() === '' || String(rTrack).toLowerCase() === 'no') return null;
+    const d = new Date(rTrack);
+    if (!isNaN(d.getTime())) return d;
+    const parsed = parseMsg(rTrack);
+    if (parsed.date) return parsed.date;
+    return null;
+};
+
+function getLeadLatestActivity(lead: any): Date {
+    let latestDate = new Date(lead.created_at);
+    for (let i = 1; i <= 12; i++) {
+        const tsRaw = lead[`W.P_${i} TS`];
+        let d = getMsgDate(lead[`W.P_${i}`] || lead.stage_data?.[`WhatsApp ${i}`]);
+        if (!d && tsRaw) {
+            d = parseTSDate(tsRaw);
+        }
+        if (d && d > latestDate) latestDate = d;
+    }
+    const rd = getMsgDate(lead.whatsapp_replied || lead.stage_data?.["WhatsApp Replied"]);
+    if (rd && rd > latestDate) latestDate = rd;
+    const fd = getMsgDate(lead["W.P_FollowUp"] || lead.stage_data?.["WhatsApp FollowUp"]);
+    if (fd && fd > latestDate) latestDate = fd;
     for (let i = 1; i <= 10; i++) {
-        const d1 = getD(lead[`W.P_Replied_${i}`]);
-        if (d1 && d1 > latest) latest = d1;
-        const d2 = getD(lead[`W.P_FollowUp_${i}`]);
-        if (d2 && d2 > latest) latest = d2;
+        const dReplied = getMsgDate(lead[`W.P_Replied_${i}`]);
+        if (dReplied && dReplied > latestDate) latestDate = dReplied;
+        const dFollow = getMsgDate(lead[`W.P_FollowUp_${i}`]);
+        if (dFollow && dFollow > latestDate) latestDate = dFollow;
+        const fTs = lead[`w_p_followup_ts_${i}`];
+        if (fTs) {
+            const d = parseTSDate(fTs);
+            if (d && d > latestDate) latestDate = d;
+        }
     }
-    return latest;
+    return latestDate;
 }
 
 function getReachoutDate(lead: any): Date | null {
@@ -59,13 +107,17 @@ function getReachoutDate(lead: any): Date | null {
         if (d) return d;
     }
     const wp1Ts = lead["W.P_1 TS"];
-    if (wp1Ts && wp1Ts.includes(' - ')) {
-        const parts = wp1Ts.split(' - ');
-        const datePart = parts[parts.length - 1].trim();
-        const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (match) {
-            return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-        }
+    if (wp1Ts) {
+        const d = parseTSDate(wp1Ts);
+        if (d) return d;
+    }
+    if (lead.last_outreach_at) {
+        const d = new Date(lead.last_outreach_at);
+        if (!isNaN(d.getTime())) return d;
+    }
+    if (wp1 && wp1 !== "" && wp1 !== "No") {
+        const d = new Date(lead.created_at || 0);
+        if (!isNaN(d.getTime())) return d;
     }
     return null;
 }
@@ -124,24 +176,96 @@ export async function GET(req: Request) {
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads", "week1_wp_1_ts", from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads_uk", "week1_wp_1_ts", from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads", null, from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads_uk", null, from, to),
         ]);
 
-        // Nurture stats (separate schema)
+        // Normalize nurture rows into consolidated-lead schema
+        const NURTURE_TO_WP: Record<string, string> = {};
+        const nurtureKeys = ['week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+                            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+                            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4'];
+        nurtureKeys.forEach((key, i) => { NURTURE_TO_WP[key] = `W.P_${i + 1}`; });
+
+        const NURTURE_TS_TO_WP: Record<string, string> = {};
+        nurtureKeys.forEach((key, i) => { NURTURE_TS_TO_WP[`${key}_ts`] = `W.P_${i + 1} TS`; });
+
+        const normalizeNurture = (rows: any[], sourceLoop: string) =>
+            rows.map((l: any) => {
+                const mapped: any = { ...l };
+                nurtureKeys.forEach((nk) => {
+                    const wpKey = NURTURE_TO_WP[nk];
+                    if (l[nk] && String(l[nk]).trim() !== '') mapped[wpKey] = l[nk];
+                });
+                nurtureKeys.forEach((nk) => {
+                    const tsKey = `${nk}_ts`;
+                    const wpTsKey = NURTURE_TS_TO_WP[tsKey];
+                    if (l[tsKey]) mapped[wpTsKey] = String(l[tsKey]);
+                });
+                
+                // Map replies, followups, and timestamps dynamically supporting both space and underscore variants
+                for (let i = 1; i <= 10; i++) {
+                    const repliedVal = l[`W.P_Replied ${i}`] ?? l[`wp_replied_${i}`] ?? l[`W.P_Replied_${i}`];
+                    if (repliedVal && String(repliedVal).trim() !== '') {
+                        mapped[`W.P_Replied_${i}`] = repliedVal;
+                    }
+
+                    const followupVal = l[`W.P_FollowUp ${i}`] ?? l[`wp_followup_${i}`] ?? l[`W.P_FollowUp_${i}`];
+                    if (followupVal && String(followupVal).trim() !== '') {
+                        mapped[`W.P_FollowUp_${i}`] = followupVal;
+                    }
+
+                    const followupTsVal = l[`W.P_FollowUp TS ${i}`] ?? l[`wp_followup_ts_${i}`] ?? l[`W.P_FollowUp_TS_${i}`];
+                    if (followupTsVal) {
+                        mapped[`w_p_followup_ts_${i}`] = String(followupTsVal);
+                        mapped[`W.P_FollowUp_${i} TS`] = String(followupTsVal);
+                    }
+                }
+                mapped.source_loop = sourceLoop;
+                mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
+                mapped["WP_Replied_track"] = l.wp_replied_track || '';
+                mapped["WP_last_contacted"] = l.wp_last_contacted || l.last_contacted || '';
+                return mapped;
+            });
+
+        const normNurture   = normalizeNurture(nurtureRows,   'Nurture');
+        const normNurtureUk = normalizeNurture(nurtureUkRows, 'Nurture UK');
+
+        // Nurture stats (separate schema, filtered in-memory)
+        const filteredNurtureRows = normNurture.filter((l: any) => {
+            const rd = getNurtureFirstContactDate(l);
+            return rd && isInRange(rd);
+        });
+        const filteredNurtureUkRows = normNurtureUk.filter((l: any) => {
+            const rd = getNurtureFirstContactDate(l);
+            return rd && isInRange(rd);
+        });
+
         let nurtureTotalSent = 0, nurtureReplied = 0;
         let nurtureUkTotalSent = 0, nurtureUkReplied = 0;
 
-        [...nurtureRows].forEach((l: any) => {
+        filteredNurtureRows.forEach((l: any) => {
             NURTURE_WP_COLS.forEach(col => { if (l[col] && String(l[col]).trim() !== '') nurtureTotalSent++; });
-            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureReplied++;
+            const replyDate = getNurtureReplyDate(l);
+            if (replyDate && isInRange(replyDate)) nurtureReplied++;
         });
-        [...nurtureUkRows].forEach((l: any) => {
+        filteredNurtureUkRows.forEach((l: any) => {
             NURTURE_WP_COLS.forEach(col => { if (l[col] && String(l[col]).trim() !== '') nurtureUkTotalSent++; });
-            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureUkReplied++;
+            const replyDate = getNurtureReplyDate(l);
+            if (replyDate && isInRange(replyDate)) nurtureUkReplied++;
         });
 
-        const allLeads = [...leadsRows, ...introRows, ...introUkRows, ...followUpRows, ...followUpUkRows];
+        // Consolidate intro/follow_up rows to normalize field names (space→underscore, TS mappings, etc.)
+        const rawForConsolidation: RawLeadsResponse = {
+            intro: introRows,
+            intro_uk: introUkRows,
+            follow_up: followUpRows,
+            follow_up_uk: followUpUkRows,
+        };
+        const consolidatedNormalLeads = consolidateLeads(rawForConsolidation);
+
+        // Combine consolidated normal leads, leads table, and normalized nurture leads
+        const allLeads = [...consolidatedNormalLeads, ...leadsRows, ...normNurture, ...normNurtureUk];
 
         const filteredLeads = allLeads.filter((lead: any) => {
             const rd = getReachoutDate(lead);
@@ -159,7 +283,7 @@ export async function GET(req: Request) {
 
             // Round counting: each round W.P_1 through W.P_12
             for (let i = 1; i <= 12; i++) {
-                const d = parseMsg(lead[`W.P_${i}`] || stageData[`WhatsApp ${i}`]).date;
+                const d = getMsgDateWithFallback(lead, `W.P_${i}`);
                 if (d && isInRange(d)) {
                     totalSent++;
                     const roundLabel = i <= 6 ? `Round ${i}` : 'Round 12+';
@@ -167,14 +291,14 @@ export async function GET(req: Request) {
                 }
             }
 
-            const df = parseMsg(lead["W.P_FollowUp"] || stageData["WhatsApp FollowUp"]).date;
+            const df = getMsgDateWithFallback(lead, "W.P_FollowUp", "W.P_FollowUp TS");
             if (df && isInRange(df)) {
                 totalSent++;
                 roundSent['Follow-up'] = (roundSent['Follow-up'] || 0) + 1;
             }
 
             for (let i = 1; i <= 10; i++) {
-                const ds = parseMsg(lead[`W.P_FollowUp_${i}`]).date;
+                const ds = getMsgDateWithFallback(lead, `W.P_FollowUp_${i}`, `W.P_FollowUp_${i} TS`);
                 if (ds && isInRange(ds)) {
                     totalSent++;
                     roundSent['Follow-up'] = (roundSent['Follow-up'] || 0) + 1;

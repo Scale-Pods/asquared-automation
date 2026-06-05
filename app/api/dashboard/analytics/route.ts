@@ -112,8 +112,8 @@ export async function GET(req: Request) {
             fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to),
             fetchAllRows(baseUrl, headers, "vapi_call_logs", "created_at", from, to),
             fetchAllRows(baseUrl, headers, "vapi_call_logs_nf", "created_at", from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads", "created_at", from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads_uk", "created_at", from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads", null, from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads_uk", null, from, to),
         ]);
 
         const allCalls = [...allCallsRaw, ...allCallsNf];
@@ -236,10 +236,62 @@ export async function GET(req: Request) {
             ? `Since ${allWpDates.reduce((min, d) => d < min ? d : min).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
             : "Real-time";
 
-        // --- Total Replies (from normal contact rows, date-filtered by WP_Replied_track) ---
+        // --- Total Replies (including nurture contact rows, date-filtered by WP_Replied_track) ---
+        const NURTURE_TO_WP: Record<string, string> = {};
+        const nurtureKeys = ['week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+                            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+                            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4'];
+        nurtureKeys.forEach((key, i) => { NURTURE_TO_WP[key] = `W.P_${i + 1}`; });
+
+        const NURTURE_TS_TO_WP: Record<string, string> = {};
+        nurtureKeys.forEach((key, i) => { NURTURE_TS_TO_WP[`${key}_ts`] = `W.P_${i + 1} TS`; });
+
+        const normalizeNurture = (rows: any[], sourceLoop: string) =>
+            rows.map((l: any) => {
+                const mapped: any = { ...l };
+                nurtureKeys.forEach((nk) => {
+                    const wpKey = NURTURE_TO_WP[nk];
+                    if (l[nk] && String(l[nk]).trim() !== '') mapped[wpKey] = l[nk];
+                });
+                nurtureKeys.forEach((nk) => {
+                    const tsKey = `${nk}_ts`;
+                    const wpTsKey = NURTURE_TS_TO_WP[tsKey];
+                    if (l[tsKey]) mapped[wpTsKey] = String(l[tsKey]);
+                });
+                
+                // Map replies, followups, and timestamps dynamically supporting both space and underscore variants
+                for (let i = 1; i <= 10; i++) {
+                    const repliedVal = l[`W.P_Replied ${i}`] ?? l[`wp_replied_${i}`] ?? l[`W.P_Replied_${i}`];
+                    if (repliedVal && String(repliedVal).trim() !== '') {
+                        mapped[`W.P_Replied_${i}`] = repliedVal;
+                    }
+
+                    const followupVal = l[`W.P_FollowUp ${i}`] ?? l[`wp_followup_${i}`] ?? l[`W.P_FollowUp_${i}`];
+                    if (followupVal && String(followupVal).trim() !== '') {
+                        mapped[`W.P_FollowUp_${i}`] = followupVal;
+                    }
+
+                    const followupTsVal = l[`W.P_FollowUp TS ${i}`] ?? l[`wp_followup_ts_${i}`] ?? l[`W.P_FollowUp_TS_${i}`];
+                    if (followupTsVal) {
+                        mapped[`w_p_followup_ts_${i}`] = String(followupTsVal);
+                        mapped[`W.P_FollowUp_${i} TS`] = String(followupTsVal);
+                    }
+                }
+                mapped.source_loop = sourceLoop;
+                mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
+                mapped["WP_Replied_track"] = l.wp_replied_track || '';
+                mapped["WP_last_contacted"] = l.wp_last_contacted || l.last_contacted || '';
+                return mapped;
+            });
+
+        const normNurture   = normalizeNurture(nurtureLeadsRows,   'Nurture');
+        const normNurtureUk = normalizeNurture(nurtureLeadsUkRows, 'Nurture UK');
+
+        const allContactRows = [...normalContactRows, ...normNurture, ...normNurtureUk];
+
         let totalReplies = 0;
         const replyLeads: any[] = [];
-        normalContactRows.forEach((lead: any) => {
+        allContactRows.forEach((lead: any) => {
             const replyVal = lead["WP_Replied_track"];
             if (!replyVal || replyVal === "" || String(replyVal).toLowerCase() === "no") return;
             const parsed = parseMsg(replyVal);
@@ -320,15 +372,33 @@ export async function GET(req: Request) {
         const ownerVoiceDurationString = formatDuration(ownerVoiceSeconds);
 
         // --- Nurture Leads stats (WP reachouts already computed above) ---
-        const nurtureLeadsCount = nurtureLeadsRows.length;
-        const nurtureReplies = nurtureLeadsRows.filter((l: any) =>
-            l.wp_replied_track && String(l.wp_replied_track).trim() !== ''
+        const nurtureLeadsCount = nurtureLeadsRows.filter((l: any) =>
+            isWithinRange(l.created_at ? new Date(l.created_at) : null, fromDate, toDate)
         ).length;
 
-        const nurtureUkLeadsCount = nurtureLeadsUkRows.length;
-        const nurtureUkReplies = nurtureLeadsUkRows.filter((l: any) =>
-            l.wp_replied_track && String(l.wp_replied_track).trim() !== ''
+        const getNurtureReplyDate = (l: any): Date | null => {
+            const rTrack = l.wp_replied_track;
+            if (!rTrack || String(rTrack).trim() === '' || String(rTrack).toLowerCase() === 'no') return null;
+            const d = new Date(rTrack);
+            if (!isNaN(d.getTime())) return d;
+            const parsed = parseMsg(rTrack);
+            if (parsed.date) return parsed.date;
+            return null;
+        };
+
+        const nurtureReplies = nurtureLeadsRows.filter((l: any) => {
+            const rd = getNurtureReplyDate(l);
+            return rd && isWithinRange(rd, fromDate, toDate);
+        }).length;
+
+        const nurtureUkLeadsCount = nurtureLeadsUkRows.filter((l: any) =>
+            isWithinRange(l.created_at ? new Date(l.created_at) : null, fromDate, toDate)
         ).length;
+
+        const nurtureUkReplies = nurtureLeadsUkRows.filter((l: any) => {
+            const rd = getNurtureReplyDate(l);
+            return rd && isWithinRange(rd, fromDate, toDate);
+        }).length;
 
         const minNurtureDate = nurtureLeadsRows.reduce((min: Date | null, l: any) => {
             const d = new Date(l.created_at || 0);

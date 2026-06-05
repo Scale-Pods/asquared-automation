@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay } from 'date-fns';
-import { parseMsg, fetchAllRows } from '@/lib/server-parsers';
+import { parseMsg, fetchAllRows, parseTSDate } from '@/lib/server-parsers';
 import { consolidateLeads, RawLeadsResponse, ConsolidatedLead } from '@/lib/leads-utils';
 
 export const dynamic = 'force-dynamic';
@@ -24,13 +24,17 @@ function getReachoutDate(lead: any): Date | null {
         if (d) return d;
     }
     const wp1Ts = lead["W.P_1 TS"];
-    if (wp1Ts && wp1Ts.includes(' - ')) {
-        const parts = wp1Ts.split(' - ');
-        const datePart = parts[parts.length - 1].trim();
-        const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (match) {
-            return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-        }
+    if (wp1Ts) {
+        const d = parseTSDate(wp1Ts);
+        if (d) return d;
+    }
+    if (lead.last_outreach_at) {
+        const d = new Date(lead.last_outreach_at);
+        if (!isNaN(d.getTime())) return d;
+    }
+    if (wp1 && wp1 !== "" && wp1 !== "No") {
+        const d = new Date(lead.created_at || 0);
+        if (!isNaN(d.getTime())) return d;
     }
     return null;
 }
@@ -112,8 +116,8 @@ export async function GET(req: Request) {
             fetchTable("follow_up_uk", null),
             fetchTable("master_leads", "Last Contacted"),
             fetchTable("leads", "last_outreach_at"),
-            fetchTable("nurture_leads", "week1_wp_1_ts"),
-            fetchTable("nurture_leads_uk", "week1_wp_1_ts"),
+            fetchTable("nurture_leads", null),
+            fetchTable("nurture_leads_uk", null),
         ]);
 
         // Normalise nurture rows into consolidated-lead shape so existing filters work
@@ -127,16 +131,6 @@ export async function GET(req: Request) {
         // Map nurture timestamp columns to W.P_* TS
         const NURTURE_TS_TO_WP: Record<string, string> = {};
         nurtureKeys.forEach((key, i) => { NURTURE_TS_TO_WP[`${key}_ts`] = `W.P_${i + 1} TS`; });
-
-        // Map wp_replied_* → W.P_Replied_*, wp_followup_* → W.P_FollowUp_*, wp_followup_ts_* → W.P_FollowUp_* TS
-        const REPLIED_MAP: Record<string, string> = {};
-        const FOLLOWUP_MAP: Record<string, string> = {};
-        const FOLLOWUP_TS_MAP: Record<string, string> = {};
-        for (let i = 1; i <= 10; i++) {
-            REPLIED_MAP[`wp_replied_${i}`] = `W.P_Replied_${i}`;
-            FOLLOWUP_MAP[`wp_followup_${i}`] = `W.P_FollowUp_${i}`;
-            FOLLOWUP_TS_MAP[`wp_followup_ts_${i}`] = `W.P_FollowUp_${i} TS`;
-        }
 
         const normalizeNurture = (rows: any[], sourceLoop: string) =>
             rows.map((l: any) => {
@@ -154,18 +148,25 @@ export async function GET(req: Request) {
                     const wpTsKey = NURTURE_TS_TO_WP[tsKey];
                     if (l[tsKey]) mapped[wpTsKey] = String(l[tsKey]);
                 });
-                // Map reply columns
-                Object.entries(REPLIED_MAP).forEach(([src, dest]) => {
-                    if (l[src] && String(l[src]).trim() !== '') mapped[dest] = l[src];
-                });
-                // Map followup columns
-                Object.entries(FOLLOWUP_MAP).forEach(([src, dest]) => {
-                    if (l[src] && String(l[src]).trim() !== '') mapped[dest] = l[src];
-                });
-                // Map followup TS columns
-                Object.entries(FOLLOWUP_TS_MAP).forEach(([src, dest]) => {
-                    if (l[src]) mapped[dest] = String(l[src]);
-                });
+                
+                // Map replies, followups, and timestamps dynamically supporting both space and underscore variants
+                for (let i = 1; i <= 10; i++) {
+                    const repliedVal = l[`W.P_Replied ${i}`] ?? l[`wp_replied_${i}`] ?? l[`W.P_Replied_${i}`];
+                    if (repliedVal && String(repliedVal).trim() !== '') {
+                        mapped[`W.P_Replied_${i}`] = repliedVal;
+                    }
+
+                    const followupVal = l[`W.P_FollowUp ${i}`] ?? l[`wp_followup_${i}`] ?? l[`W.P_FollowUp_${i}`];
+                    if (followupVal && String(followupVal).trim() !== '') {
+                        mapped[`W.P_FollowUp_${i}`] = followupVal;
+                    }
+
+                    const followupTsVal = l[`W.P_FollowUp TS ${i}`] ?? l[`wp_followup_ts_${i}`] ?? l[`W.P_FollowUp_TS_${i}`];
+                    if (followupTsVal) {
+                        mapped[`w_p_followup_ts_${i}`] = String(followupTsVal);
+                        mapped[`W.P_FollowUp_${i} TS`] = String(followupTsVal);
+                    }
+                }
                 mapped.source_loop = sourceLoop;
                 mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
                 mapped["WP_Replied_track"] = l.wp_replied_track || '';

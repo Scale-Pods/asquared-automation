@@ -57,20 +57,8 @@ function getReachoutDate(lead: any): Date | null {
     }
     const wp1Ts = lead["W.P_1 TS"];
     if (wp1Ts) {
-        // Handle "Status - DD/MM/YYYY HH:MM" format
-        if (wp1Ts.includes(' - ')) {
-            const parts = wp1Ts.split(' - ');
-            const datePart = parts[parts.length - 1].trim();
-            const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-            if (match) {
-                return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-            }
-        }
-        // Handle plain ISO timestamp (intro/follow_up tables)
-        if (/^\d{4}-\d{2}-\d{2}T/.test(wp1Ts)) {
-            const d = new Date(wp1Ts);
-            if (!isNaN(d.getTime())) return d;
-        }
+        const d = parseTSDate(wp1Ts);
+        if (d) return d;
     }
     // leads table uses last_outreach_at
     if (lead.last_outreach_at) {
@@ -147,99 +135,60 @@ export async function GET(req: Request) {
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to),
-            // nurture uses week1_wp_1_ts (timestamptz) for DB-level date filter
-            fetchAllRows(baseUrl, headers, "nurture_leads", "week1_wp_1_ts", from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads_uk", "week1_wp_1_ts", from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads", null, from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads_uk", null, from, to),
         ]);
 
+        // Normalize nurture rows into consolidated-lead schema
+        const NURTURE_TO_WP: Record<string, string> = {};
+        const nurtureKeys = ['week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+                            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+                            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4'];
+        nurtureKeys.forEach((key, i) => { NURTURE_TO_WP[key] = `W.P_${i + 1}`; });
 
-        // Nurture schema: week1_wp_1..week3_wp_4 (text), week1_wp_1_ts..week3_wp_4_ts (timestamptz)
-        // wp_replied_track (text) for replies
-        const NURTURE_WP_COLS = [
-            'week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
-            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
-            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4',
-        ];
-        const NURTURE_WP_TS_COLS = [
-            'week1_wp_1_ts','week1_wp_2_ts','week1_wp_3_ts','week1_wp_4_ts',
-            'week2_wp_1_ts','week2_wp_2_ts','week2_wp_3_ts','week2_wp_4_ts',
-            'week3_wp_1_ts','week3_wp_2_ts','week3_wp_3_ts','week3_wp_4_ts',
-        ];
+        const NURTURE_TS_TO_WP: Record<string, string> = {};
+        nurtureKeys.forEach((key, i) => { NURTURE_TS_TO_WP[`${key}_ts`] = `W.P_${i + 1} TS`; });
 
-        // Returns the earliest (first contact) date for a nurture row.
-        // Uses week1_wp_1_ts first (proper timestamptz), then falls back through other TS cols,
-        // then wp_last_contacted/last_contacted, then created_at if any wp col is non-empty.
-        const getNurtureFirstContactDate = (l: any): Date | null => {
-            // Prefer week1_wp_1_ts as the canonical "first reachout" date
-            const firstTs = l['week1_wp_1_ts'];
-            if (firstTs) {
-                const d = new Date(firstTs);
-                if (!isNaN(d.getTime())) return d;
-            }
-            // Try any other TS column in order
-            for (const tsCol of NURTURE_WP_TS_COLS) {
-                const ts = l[tsCol];
-                if (ts) { const d = new Date(ts); if (!isNaN(d.getTime())) return d; }
-            }
-            // Legacy fallback: wp_last_contacted / last_contacted
-            const legacyTs = l.wp_last_contacted || l.last_contacted;
-            if (legacyTs) { const d = new Date(legacyTs); if (!isNaN(d.getTime())) return d; }
-            // Last resort: row has content but no timestamp — use created_at
-            for (const col of NURTURE_WP_COLS) {
-                if (l[col] && String(l[col]).trim() !== '') {
-                    const d = new Date(l.created_at || 0);
-                    return isNaN(d.getTime()) ? null : d;
+        const normalizeNurture = (rows: any[], sourceLoop: string) =>
+            rows.map((l: any) => {
+                const mapped: any = { ...l };
+                nurtureKeys.forEach((nk) => {
+                    const wpKey = NURTURE_TO_WP[nk];
+                    if (l[nk] && String(l[nk]).trim() !== '') mapped[wpKey] = l[nk];
+                });
+                nurtureKeys.forEach((nk) => {
+                    const tsKey = `${nk}_ts`;
+                    const wpTsKey = NURTURE_TS_TO_WP[tsKey];
+                    if (l[tsKey]) mapped[wpTsKey] = String(l[tsKey]);
+                });
+                
+                // Map replies, followups, and timestamps dynamically supporting both space and underscore variants
+                for (let i = 1; i <= 10; i++) {
+                    const repliedVal = l[`W.P_Replied ${i}`] ?? l[`wp_replied_${i}`] ?? l[`W.P_Replied_${i}`];
+                    if (repliedVal && String(repliedVal).trim() !== '') {
+                        mapped[`W.P_Replied_${i}`] = repliedVal;
+                    }
+
+                    const followupVal = l[`W.P_FollowUp ${i}`] ?? l[`wp_followup_${i}`] ?? l[`W.P_FollowUp_${i}`];
+                    if (followupVal && String(followupVal).trim() !== '') {
+                        mapped[`W.P_FollowUp_${i}`] = followupVal;
+                    }
+
+                    const followupTsVal = l[`W.P_FollowUp TS ${i}`] ?? l[`wp_followup_ts_${i}`] ?? l[`W.P_FollowUp_TS_${i}`];
+                    if (followupTsVal) {
+                        mapped[`w_p_followup_ts_${i}`] = String(followupTsVal);
+                        mapped[`W.P_FollowUp_${i} TS`] = String(followupTsVal);
+                    }
                 }
-            }
-            return null;
-        };
-
-        // Count messages sent for a nurture row — only counts cols whose TS falls in range
-        // (or where TS is missing but the content col is non-empty and the row is in range)
-        const countNurtureMsgsInRange = (l: any): number => {
-            let count = 0;
-            NURTURE_WP_COLS.forEach((col, idx) => {
-                if (!l[col] || String(l[col]).trim() === '') return;
-                const tsCol = NURTURE_WP_TS_COLS[idx];
-                const ts = l[tsCol];
-                if (ts) {
-                    const d = new Date(ts);
-                    if (!isNaN(d.getTime()) && isInRange(d)) count++;
-                } else {
-                    // No individual TS — include if the row's first contact is in range
-                    count++;
-                }
+                mapped.source_loop = sourceLoop;
+                mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
+                mapped["WP_Replied_track"] = l.wp_replied_track || '';
+                mapped["WP_last_contacted"] = l.wp_last_contacted || l.last_contacted || '';
+                return mapped;
             });
-            return count;
-        };
 
-        let nurtureMsgsSent = 0, nurtureReplies = 0, nurtureLeadsContacted = 0;
-        let nurtureUkMsgsSent = 0, nurtureUkReplies = 0, nurtureUkLeadsContacted = 0;
-
-        [...nurtureRows].forEach((l: any) => {
-            // A row counts as a reachout only if week1_wp_1 (or any first-msg col) is not null
-            // AND its date falls within the selected range.
-            const hasFirstContact = !!(l['week1_wp_1'] && String(l['week1_wp_1']).trim() !== '');
-            if (!hasFirstContact) return;
-            const rd = getNurtureFirstContactDate(l);
-            if (!rd || !isInRange(rd)) return;
-            nurtureLeadsContacted++;
-            nurtureMsgsSent += countNurtureMsgsInRange(l);
-            // Reply: wp_replied_track not null/empty/"no"
-            const rTrack = l.wp_replied_track;
-            if (rTrack && String(rTrack).trim() !== '' && String(rTrack).toLowerCase() !== 'no') nurtureReplies++;
-        });
-
-        [...nurtureUkRows].forEach((l: any) => {
-            const hasFirstContact = !!(l['week1_wp_1'] && String(l['week1_wp_1']).trim() !== '');
-            if (!hasFirstContact) return;
-            const rd = getNurtureFirstContactDate(l);
-            if (!rd || !isInRange(rd)) return;
-            nurtureUkLeadsContacted++;
-            nurtureUkMsgsSent += countNurtureMsgsInRange(l);
-            const rTrack = l.wp_replied_track;
-            if (rTrack && String(rTrack).trim() !== '' && String(rTrack).toLowerCase() !== 'no') nurtureUkReplies++;
-        });
+        const normNurture   = normalizeNurture(nurtureRows,   'Nurture');
+        const normNurtureUk = normalizeNurture(nurtureUkRows, 'Nurture UK');
 
         // Consolidate intro/follow_up rows to normalize field names (space→underscore, TS mappings, etc.)
         const rawForConsolidation: RawLeadsResponse = {
@@ -250,8 +199,8 @@ export async function GET(req: Request) {
         };
         const consolidatedNormalLeads = consolidateLeads(rawForConsolidation);
 
-        // Combine consolidated normal leads with leads table (raw rows use last_outreach_at)
-        const allLeads = [...consolidatedNormalLeads, ...leadsRows];
+        // Combine consolidated normal leads, leads table, and normalized nurture leads
+        const allLeads = [...consolidatedNormalLeads, ...leadsRows, ...normNurture, ...normNurtureUk];
 
         // A lead counts as a reachout only when W.P_1 is not null/empty (or W.P_1 TS has a parseable date)
         // AND that date falls within the selected range.
@@ -366,13 +315,7 @@ export async function GET(req: Request) {
             }
         });
 
-        // Merge nurture table counts into per-table breakdowns
-        if (nurtureLeadsContacted > 0) tableReachouts['nurture_leads'] = nurtureLeadsContacted;
-        if (nurtureUkLeadsContacted > 0) tableReachouts['nurture_leads_uk'] = nurtureUkLeadsContacted;
-        if (nurtureReplies > 0) tableReplies['nurture_leads'] = nurtureReplies;
-        if (nurtureUkReplies > 0) tableReplies['nurture_leads_uk'] = nurtureUkReplies;
-        if (nurtureMsgsSent > 0) tableMsgsSent['nurture_leads'] = nurtureMsgsSent;
-        if (nurtureUkMsgsSent > 0) tableMsgsSent['nurture_leads_uk'] = nurtureUkMsgsSent;
+        // Nurture table counts are now automatically integrated through allLeads consolidation
 
         const totalReachouts = Object.values(tableReachouts).reduce((a, b) => a + b, 0);
         const totalRepliesAll = Object.values(tableReplies).reduce((a, b) => a + b, 0);

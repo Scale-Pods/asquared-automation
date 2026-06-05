@@ -60,11 +60,20 @@ export function parseTSDate(tsValue: string): Date | null {
         const isoDate = new Date(datePart.replace(' ', 'T'));
         if (!isNaN(isoDate.getTime())) return isoDate;
     }
+    // Handle nurture style "DELIVERED at Jun 05 2026, 04:00 PM"
+    const m = str.match(/at\s+([A-Za-z]+\s+\d{1,2}\s+\d{4},?\s+\d{1,2}:\d{2}\s*[AP]M)/i);
+    if (m) {
+        const d = new Date(m[1].replace(',', ''));
+        if (!isNaN(d.getTime())) return d;
+    }
     // Handle plain ISO timestamp (e.g. 2026-06-04T16:50:14.552+05:30)
     if (/^\d{4}-\d{2}-\d{2}T/.test(str)) {
         const d = new Date(str);
         if (!isNaN(d.getTime())) return d;
     }
+    // Generic date parse fallback
+    const genericDate = new Date(str);
+    if (!isNaN(genericDate.getTime())) return genericDate;
     return null;
 }
 

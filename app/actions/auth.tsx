@@ -1,5 +1,6 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { cookies } from 'next/headers';
 import { supabaseAdmin } from '@/lib/supabase';
 import { hashPassword, comparePassword } from '@/lib/auth-utils';
@@ -92,7 +93,12 @@ export async function forgotPassword(prevState: any, formData: FormData) {
     }
 
     try {
-        const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').trim();
+        // Dynamically resolve the app URL from request headers so it works on
+        // localhost AND Vercel without needing NEXT_PUBLIC_APP_URL to be set correctly.
+        const reqHeaders = await headers();
+        const host = reqHeaders.get('x-forwarded-host') || reqHeaders.get('host') || 'localhost:3000';
+        const proto = reqHeaders.get('x-forwarded-proto') || 'http';
+        const appUrl = `${proto}://${host}`;
 
         // Check if a Supabase Auth user exists for this email — if not, create a shadow user
         // so that resetPasswordForEmail can actually send the email.
@@ -114,14 +120,15 @@ export async function forgotPassword(prevState: any, formData: FormData) {
             }
         }
 
-        // Trigger Supabase's built-in recovery email — this is what actually sends the email.
+        // Trigger Supabase's built-in recovery email.
+        // redirectTo must be in the Supabase dashboard Allowed Redirect URLs.
+        const redirectTo = `${appUrl}/reset-password`;
         const { error: resetErr } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
-            redirectTo: `${appUrl}/reset-password`,
+            redirectTo,
         });
 
         if (resetErr) {
             console.error('resetPasswordForEmail error:', resetErr);
-            // Don't expose internals — always return success for security
         }
 
         // Always return success so we don't leak whether an account exists

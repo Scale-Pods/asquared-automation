@@ -1,14 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, CheckCircle2, Mail, MessageCircle, Mic } from "lucide-react";
 import { AuthModal } from "@/components/auth/auth-modal";
+import { useRouter } from "next/navigation";
 
 export default function LandingPage() {
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+    const router = useRouter();
+
+    // If Supabase redirected a recovery email to root (e.g. because /reset-password
+    // wasn't in the allowed redirect URLs), detect it here and forward the user.
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const hash = window.location.hash;
+        if (hash.includes('type=recovery') && hash.includes('access_token=')) {
+            router.replace(`/reset-password${hash}`);
+        }
+    }, [router]);
 
     const openAuth = () => {
         setIsAuthModalOpen(true);

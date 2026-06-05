@@ -124,8 +124,8 @@ export async function GET(req: Request) {
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads", null, from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads_uk", null, from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads", "week1_wp_1_ts", from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads_uk", "week1_wp_1_ts", from, to),
         ]);
 
         // Nurture stats (separate schema)

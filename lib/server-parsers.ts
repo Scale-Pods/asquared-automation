@@ -175,7 +175,10 @@ export function processReplyLeads(leads: any[]): ReplyDataItem[] {
 }
 
 export async function fetchAllRows(baseUrl: string, headers: Record<string, string>, table: string, dateColumn: string | null, from: string | null, to: string | null): Promise<any[]> {
-    const PAGE_SIZE = 2000;
+    // Supabase PostgREST silently caps responses at 1000 rows per request.
+    // We must use PAGE_SIZE = 1000 so that receiving exactly 1000 signals "there may be more rows".
+    // Receiving < 1000 signals we've reached the last page.
+    const PAGE_SIZE = 1000;
     let allData: any[] = [];
     let offset = 0;
     while (true) {
@@ -196,14 +199,23 @@ export async function fetchAllRows(baseUrl: string, headers: Record<string, stri
         }
         const url = `${baseUrl}/${table}?${params.toString()}`;
         try {
-            const res = await fetch(url, { headers, cache: 'no-store' });
-            if (!res.ok) { console.error(`fetchAllRows: ${table} returned ${res.status} for URL ${url}`); break; }
+            const pageHeaders = {
+                ...headers,
+                // Use Range header for reliable pagination alongside limit/offset
+                'Range-Unit': 'items',
+                'Range': `${offset}-${offset + PAGE_SIZE - 1}`,
+            };
+            const res = await fetch(url, { headers: pageHeaders, cache: 'no-store' });
+            // 206 Partial Content = more pages exist; 200 = last page
+            if (!res.ok && res.status !== 206) { console.error(`fetchAllRows: ${table} returned ${res.status} for URL ${url}`); break; }
             const data = await res.json();
             if (!Array.isArray(data) || data.length === 0) break;
             allData = allData.concat(data);
+            // If we got fewer rows than PAGE_SIZE (Supabase's real cap), we're done
             if (data.length < PAGE_SIZE) break;
             offset += PAGE_SIZE;
         } catch (e) { console.error(`fetchAllRows: ${table} threw`, e); break; }
     }
     return allData;
 }
+

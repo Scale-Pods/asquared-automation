@@ -151,7 +151,8 @@ export async function GET(req: Request) {
 
         const normalizeNurture = (rows: any[], sourceLoop: string) =>
             rows.map((l: any) => {
-                const mapped: any = { ...l };
+                const tbl = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
+                const mapped: any = { ...l, id: `${tbl}-${l.id}` };
                 nurtureKeys.forEach((nk) => {
                     const wpKey = NURTURE_TO_WP[nk];
                     if (l[nk] && String(l[nk]).trim() !== '') mapped[wpKey] = l[nk];
@@ -182,8 +183,10 @@ export async function GET(req: Request) {
                 }
                 mapped.source_loop = sourceLoop;
                 mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
-                mapped["WP_Replied_track"] = l.wp_replied_track || '';
-                mapped["WP_last_contacted"] = l.wp_last_contacted || l.last_contacted || '';
+                mapped.phone = l.Phone || l.phone || '';
+                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || '';
+                mapped["WP_last_contacted"] = l.wp_last_contacted || l.WP_last_contacted || l.last_contacted || l["Last Contacted"] || '';
+                mapped.replied = l.Replied || l.replied || '';
                 return mapped;
             });
 

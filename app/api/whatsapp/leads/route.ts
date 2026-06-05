@@ -80,11 +80,15 @@ export async function GET(req: Request) {
             'nurture_leads': 'nurture_leads',
         };
         let targetTable: string | null = null;
+        let cleanSearch = search;
         if (search) {
             const dashIdx = search.indexOf('-');
             if (dashIdx > 0) {
                 const prefix = search.slice(0, dashIdx).toLowerCase();
-                targetTable = ID_PREFIX_MAP[prefix] ?? null;
+                if (ID_PREFIX_MAP[prefix]) {
+                    targetTable = ID_PREFIX_MAP[prefix];
+                    cleanSearch = search.slice(dashIdx + 1);
+                }
             }
         }
 
@@ -95,10 +99,53 @@ export async function GET(req: Request) {
             (targetTable === null || targetTable === table) &&
             (tableFilterActive === null || tableFilterActive === table);
 
-        const fetchTable = (table: string, dateCol: string | null) =>
-            shouldFetch(table)
-                ? fetchAllRows(baseUrl, headers, table, dateCol, from, to)
-                : Promise.resolve([]);
+        const fetchTable = (table: string, dateCol: string | null) => {
+            if (!shouldFetch(table)) return Promise.resolve([]);
+            
+            const extraParams = new URLSearchParams();
+            if (search) {
+                const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSearch);
+                const isInt = /^\d+$/.test(cleanSearch);
+                
+                // If targetTable is explicitly set (e.g. searching by prefix ID), query by ID directly
+                if (targetTable) {
+                    if (table === 'master_leads') {
+                        if (isInt) {
+                            extraParams.append('master_leads_id', `eq.${cleanSearch}`);
+                        } else {
+                            extraParams.append('master_leads_id', `eq.-1`);
+                        }
+                    } else if (['intro', 'intro_uk', 'follow_up', 'follow_up_uk'].includes(table)) {
+                        extraParams.append('ID', `eq.${cleanSearch}`);
+                    } else {
+                        extraParams.append('id', `eq.${cleanSearch}`);
+                    }
+                } else {
+                    // General search across all tables using 'or' parameter
+                    let orFilter = '';
+                    if (table === 'intro') {
+                        orFilter = `"Name".ilike.*${cleanSearch}*,"Phone".ilike.*${cleanSearch}*,"Email".ilike.*${cleanSearch}*`;
+                        if (isUuid || isInt) orFilter += `,"ID".eq.${cleanSearch}`;
+                    } else if (['intro_uk', 'follow_up', 'follow_up_uk'].includes(table)) {
+                        orFilter = `"Name".ilike.*${cleanSearch}*,"Phone".ilike.*${cleanSearch}*,"Email".ilike.*${cleanSearch}*`;
+                        if (isInt) orFilter += `,"ID".eq.${cleanSearch}`;
+                    } else if (table === 'master_leads') {
+                        orFilter = `"Owner Name".ilike.*${cleanSearch}*,"Contact Number".ilike.*${cleanSearch}*,"Email".ilike.*${cleanSearch}*`;
+                        if (isInt) orFilter += `,master_leads_id.eq.${cleanSearch}`;
+                    } else if (table === 'leads') {
+                        orFilter = `name.ilike.*${cleanSearch}*,phone.ilike.*${cleanSearch}*,email.ilike.*${cleanSearch}*`;
+                        if (isUuid) orFilter += `,id.eq.${cleanSearch}`;
+                    } else if (['nurture_leads', 'nurture_leads_uk'].includes(table)) {
+                        orFilter = `name.ilike.*${cleanSearch}*,"Phone".ilike.*${cleanSearch}*`;
+                        if (isUuid) orFilter += `,id.eq.${cleanSearch}`;
+                    }
+                    if (orFilter) {
+                        extraParams.append('or', `(${orFilter})`);
+                    }
+                }
+            }
+            return fetchAllRows(baseUrl, headers, table, dateCol, from, to, extraParams);
+        };
 
         const [
             introRows,
@@ -134,7 +181,8 @@ export async function GET(req: Request) {
 
         const normalizeNurture = (rows: any[], sourceLoop: string) =>
             rows.map((l: any) => {
-                const mapped: any = { ...l };
+                const tbl = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
+                const mapped: any = { ...l, id: `${tbl}-${l.id}` };
                 // Map content columns
                 nurtureKeys.forEach((nk) => {
                     const wpKey = NURTURE_TO_WP[nk];
@@ -169,8 +217,10 @@ export async function GET(req: Request) {
                 }
                 mapped.source_loop = sourceLoop;
                 mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
-                mapped["WP_Replied_track"] = l.wp_replied_track || '';
-                mapped["WP_last_contacted"] = l.wp_last_contacted || l.last_contacted || '';
+                mapped.phone = l.Phone || l.phone || '';
+                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || '';
+                mapped["WP_last_contacted"] = l.wp_last_contacted || l.WP_last_contacted || l.last_contacted || l["Last Contacted"] || '';
+                mapped.replied = l.Replied || l.replied || '';
                 return mapped;
             });
 

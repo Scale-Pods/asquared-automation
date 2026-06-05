@@ -183,7 +183,7 @@ export function processReplyLeads(leads: any[]): ReplyDataItem[] {
     return result;
 }
 
-export async function fetchAllRows(baseUrl: string, headers: Record<string, string>, table: string, dateColumn: string | null, from: string | null, to: string | null): Promise<any[]> {
+export async function fetchAllRows(baseUrl: string, headers: Record<string, string>, table: string, dateColumn: string | null, from: string | null, to: string | null, extraParams?: URLSearchParams): Promise<any[]> {
     // Supabase PostgREST silently caps responses at 1000 rows per request.
     // We must use PAGE_SIZE = 1000 so that receiving exactly 1000 signals "there may be more rows".
     // Receiving < 1000 signals we've reached the last page.
@@ -205,6 +205,9 @@ export async function fetchAllRows(baseUrl: string, headers: Record<string, stri
                 endDate.setUTCHours(23, 59, 59, 999);
             }
             params.append(dateColumn, `lte.${endDate.toISOString()}`);
+        }
+        if (extraParams) {
+            extraParams.forEach((val, key) => params.append(key, val));
         }
         const url = `${baseUrl}/${table}?${params.toString()}`;
         try {

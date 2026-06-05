@@ -176,7 +176,7 @@ export async function GET(req: Request) {
                 const nurtureLeads: any[] = [];
                 selectedNurture.forEach((t, i) => {
                     (nurtureResults[i].data || []).forEach((l: any) => {
-                        const mapped: any = { ...l, source_table: t, source_loop: t === 'nurture_leads' ? 'Nurture' : 'Nurture UK' };
+                        const mapped: any = { ...l, id: `${t}-${l.id}`, source_table: t, source_loop: t === 'nurture_leads' ? 'Nurture' : 'Nurture UK' };
                         nurtureKeys.forEach((nk) => {
                             const wpKey = NURTURE_TO_WP[nk];
                             if (l[nk] && String(l[nk]).trim() !== '') mapped[wpKey] = l[nk];
@@ -195,8 +195,10 @@ export async function GET(req: Request) {
                         Object.entries(FOLLOWUP_TS_MAP).forEach(([src, dest]) => {
                             if (l[src]) mapped[dest] = String(l[src]);
                         });
-                        mapped["WP_Replied_track"] = l.wp_replied_track || '';
-                        mapped["WP_last_contacted"] = l.wp_last_contacted || l.last_contacted || '';
+                        mapped.phone = l.Phone || l.phone || '';
+                        mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || '';
+                        mapped["WP_last_contacted"] = l.wp_last_contacted || l.WP_last_contacted || l.last_contacted || l["Last Contacted"] || '';
+                        mapped.replied = l.Replied || l.replied || '';
                         if (isWhatsAppEligible(mapped)) nurtureLeads.push(mapped);
                     });
                 });

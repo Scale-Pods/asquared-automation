@@ -255,11 +255,18 @@ export function WhatsAppChatDetail({ customerId, onClose }: WhatsAppChatDetailPr
                                 if (msg.type === 'bot' && (msg as any).tsStatus) {
                                     const raw = String((msg as any).tsStatus);
                                     const label = raw.split(' - ')[0].trim();
-                                    const formatted = label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
+                                    // Handle status strings like "SENT at Jun 05 2026..." or "DELIVERED at ..."
+                                    let statusWord = label;
+                                    const atIdx = label.toLowerCase().indexOf(' at');
+                                    if (atIdx > 0) {
+                                        statusWord = label.slice(0, atIdx).trim();
+                                    }
+                                    const formatted = statusWord.charAt(0).toUpperCase() + statusWord.slice(1).toLowerCase();
                                     let cls = 'bg-emerald-500/30 text-emerald-100';
                                     if (formatted.includes('Read')) cls = 'bg-blue-400/40 text-blue-100';
                                     if (formatted.includes('Failed')) cls = 'bg-red-400/40 text-red-100';
-                                    if (formatted.includes('Sent')) cls = 'bg-white/20 text-emerald-50';
+                                    if (formatted.includes('Sent')) cls = 'bg-emerald-500/40 text-emerald-100';
+                                    if (formatted.includes('Delivered')) cls = 'bg-teal-500/30 text-teal-100';
                                     tsPill = (
                                         <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${cls}`}>
                                             {formatted}

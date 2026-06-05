@@ -266,7 +266,7 @@ export default function WhatsappChatPage() {
         const wpLeads = allLeads.filter(l => {
             const lead = l as any;
             if (lead.source_table !== sourceTab) return false;
-            if (lead.stages_passed.some((s: string) => s.toLowerCase().includes("whatsapp"))) return true;
+            if (lead.stages_passed?.some((s: string) => s.toLowerCase().includes("whatsapp"))) return true;
             if (lead.whatsapp_replied && lead.whatsapp_replied !== "No" && lead.whatsapp_replied !== "none") return true;
             for (let i = 1; i <= 10; i++) {
                 const r = lead[`W.P_Replied_${i}`];
@@ -671,7 +671,7 @@ export default function WhatsappChatPage() {
             </div>
 
             <Dialog open={!!selectedLeadId} onOpenChange={(open) => !open && setSelectedLeadId(null)}>
-                <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden p-6 gap-0">
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden p-6 gap-0" aria-describedby={undefined}>
                     <DialogHeader className="sr-only"><DialogTitle>WhatsApp Chat Detail</DialogTitle></DialogHeader>
                     {selectedLeadId && <WhatsAppChatDetail customerId={selectedLeadId} onClose={() => setSelectedLeadId(null)} />}
                 </DialogContent>

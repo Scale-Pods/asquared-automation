@@ -218,9 +218,10 @@ export async function GET(req: Request) {
                 mapped.source_loop = sourceLoop;
                 mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
                 mapped.phone = l.Phone || l.phone || '';
-                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || '';
-                mapped["WP_last_contacted"] = l.wp_last_contacted || l.WP_last_contacted || l.last_contacted || l["Last Contacted"] || '';
-                mapped.replied = l.Replied || l.replied || '';
+                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || (l.replied === true ? 'Yes' : '') || '';
+                mapped["WP_last_contacted"] = l.wp_last_contacted || l["Last Contacted"] || '';
+                mapped.name = l.name || l.Name || '';
+                mapped.replied = l.replied === true ? 'Yes' : (l.Replied || l.replied || '');
                 return mapped;
             });
 

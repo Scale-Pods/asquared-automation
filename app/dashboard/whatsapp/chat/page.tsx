@@ -100,6 +100,13 @@ const parseTSDate = (tsValue: string): Date | null => {
         return isNaN(d.getTime()) ? null : d;
     }
 
+    // Nurture format: "SENT at Jun 05 2026, 04:10 PM" / "DELIVERED at ..."
+    const nurtureMatch = str.match(/at\s+([A-Za-z]+\s+\d{1,2}\s+\d{4},?\s+\d{1,2}:\d{2}\s*[AP]M)/i);
+    if (nurtureMatch) {
+        const d = new Date(nurtureMatch[1].replace(',', ''));
+        if (!isNaN(d.getTime())) return d;
+    }
+
     if (str.includes(' - ')) {
         const parts = str.split(' - ');
         const datePart = parts[parts.length - 1].trim();
@@ -815,9 +822,22 @@ function MessageStatusBadge({ index, status }: { index: number, status: string }
     if (!status) return null;
 
     const isIsoTs = /^\d{4}-\d{2}-\d{2}T/.test(status.trim());
-    const parts = isIsoTs ? [] : status.split(' - ');
-    const statusText = isIsoTs ? 'Sent' : parts[0].trim();
-    const rawTimestamp = isIsoTs ? status.trim() : (parts.length > 1 ? parts[1].trim() : '');
+    // Nurture format: "SENT at Jun 05 2026, 04:10 PM" — extract status word before " at"
+    const isNurtureTs = !isIsoTs && /\bat\s+[A-Za-z]+\s+\d{1,2}\s+\d{4}/i.test(status.trim());
+    const parts = (isIsoTs || isNurtureTs) ? [] : status.split(' - ');
+    let statusText: string;
+    let rawTimestamp: string;
+    if (isIsoTs) {
+        statusText = 'Sent';
+        rawTimestamp = status.trim();
+    } else if (isNurtureTs) {
+        const atIdx = status.toLowerCase().indexOf(' at ');
+        statusText = atIdx > 0 ? status.slice(0, atIdx).trim() : status.trim();
+        rawTimestamp = status.trim();
+    } else {
+        statusText = parts[0].trim();
+        rawTimestamp = parts.length > 1 ? parts[1].trim() : '';
+    }
 
     const formatTooltipDate = (dateStr: string) => {
         const d = new Date(dateStr.replace(/(\d{1,2})\/(\d{1,2})\/(\d{4})/, '$3-$2-$1'));

@@ -196,9 +196,10 @@ export async function GET(req: Request) {
                             if (l[src]) mapped[dest] = String(l[src]);
                         });
                         mapped.phone = l.Phone || l.phone || '';
-                        mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || '';
-                        mapped["WP_last_contacted"] = l.wp_last_contacted || l.WP_last_contacted || l.last_contacted || l["Last Contacted"] || '';
-                        mapped.replied = l.Replied || l.replied || '';
+                        mapped.name = l.name || l.Name || '';
+                        mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || (l.replied === true ? 'Yes' : '') || '';
+                        mapped["WP_last_contacted"] = l.wp_last_contacted || l["Last Contacted"] || '';
+                        mapped.replied = l.replied === true ? 'Yes' : (l.Replied || l.replied || '');
                         if (isWhatsAppEligible(mapped)) nurtureLeads.push(mapped);
                     });
                 });

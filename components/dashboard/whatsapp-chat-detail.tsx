@@ -65,6 +65,12 @@ function buildTimeline(leadData: any): any[] {
             const d = new Date(str);
             return isNaN(d.getTime()) ? null : d.toISOString();
         }
+        // Nurture format: "SENT at Jun 05 2026, 04:00 PM" / "DELIVERED at ..."
+        const nurtureMatch = str.match(/at\s+([A-Za-z]+\s+\d{1,2}\s+\d{4},?\s+\d{1,2}:\d{2}\s*[AP]M)/i);
+        if (nurtureMatch) {
+            const d = new Date(nurtureMatch[1].replace(',', ''));
+            if (!isNaN(d.getTime())) return d.toISOString();
+        }
         const parts = str.split(' - ');
         if (parts.length < 2) return null;
         const datePart = parts[1].trim();
@@ -75,10 +81,11 @@ function buildTimeline(leadData: any): any[] {
     const f = leadData;
     let seq = 1;
 
-    // Section 1: initial bot templates — always first, in fixed order
+    // Section 1: initial bot templates — always first, in fixed order (up to 12 for nurture)
     const templates: any[] = [];
-    for (const key of ['W.P_1', 'W.P_2', 'W.P_3', 'W.P_4']) {
-        const raw = f[key] || f.stage_data?.[`WhatsApp ${key.replace('W.P_', '')}`];
+    for (let i = 1; i <= 12; i++) {
+        const key = `W.P_${i}`;
+        const raw = f[key] || f.stage_data?.[`WhatsApp ${i}`];
         if (!raw) continue;
         const tsRaw: string | null = f[`${key} TS`] || null;
         const msg = parseMsg(raw, key, 'bot', seq++);

@@ -50,15 +50,18 @@ function getLeadLatestActivity(lead: any): Date {
 }
 
 function getReachoutDate(lead: any): Date | null {
-    const wp1 = lead["W.P_1"];
-    if (wp1 && wp1 !== "" && wp1 !== "No") {
-        const d = parseMsg(wp1).date;
-        if (d) return d;
-    }
-    const wp1Ts = lead["W.P_1 TS"];
-    if (wp1Ts) {
-        const d = parseTSDate(wp1Ts);
-        if (d) return d;
+    // Check all 12 templates so nurture leads starting from week2/3 are also found
+    for (let i = 1; i <= 12; i++) {
+        const wp = lead[`W.P_${i}`];
+        if (wp && wp !== "" && wp !== "No") {
+            const d = parseMsg(wp).date;
+            if (d) return d;
+        }
+        const wpTs = lead[`W.P_${i} TS`];
+        if (wpTs) {
+            const d = parseTSDate(wpTs);
+            if (d) return d;
+        }
     }
     // leads table uses last_outreach_at
     if (lead.last_outreach_at) {
@@ -66,9 +69,12 @@ function getReachoutDate(lead: any): Date | null {
         if (!isNaN(d.getTime())) return d;
     }
     // Fallback: message exists but date undetectable — use created_at
-    if (wp1 && wp1 !== "" && wp1 !== "No") {
-        const d = new Date(lead.created_at || 0);
-        if (!isNaN(d.getTime())) return d;
+    for (let i = 1; i <= 12; i++) {
+        const wp = lead[`W.P_${i}`];
+        if (wp && wp !== "" && wp !== "No") {
+            const d = new Date(lead.created_at || 0);
+            if (!isNaN(d.getTime())) return d;
+        }
     }
     return null;
 }
@@ -184,9 +190,10 @@ export async function GET(req: Request) {
                 mapped.source_loop = sourceLoop;
                 mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
                 mapped.phone = l.Phone || l.phone || '';
-                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || '';
-                mapped["WP_last_contacted"] = l.wp_last_contacted || l.WP_last_contacted || l.last_contacted || l["Last Contacted"] || '';
-                mapped.replied = l.Replied || l.replied || '';
+                mapped.name = l.name || l.Name || '';
+                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || (l.replied === true ? 'Yes' : '') || '';
+                mapped["WP_last_contacted"] = l.wp_last_contacted || l["Last Contacted"] || '';
+                mapped.replied = l.replied === true ? 'Yes' : (l.Replied || l.replied || '');
                 return mapped;
             });
 
@@ -208,12 +215,18 @@ export async function GET(req: Request) {
         // A lead counts as a reachout only when W.P_1 is not null/empty (or W.P_1 TS has a parseable date)
         // AND that date falls within the selected range.
         const filteredLeads = allLeads.filter((lead: any) => {
-            const wp1 = lead["W.P_1"];
-            const wp1Ts = lead["W.P_1 TS"];
-            // Must have at least W.P_1 content or W.P_1 TS
-            const hasFirstMsg = (wp1 && String(wp1).trim() !== '' && String(wp1).trim().toLowerCase() !== 'no')
-                             || (wp1Ts && String(wp1Ts).trim() !== '');
-            if (!hasFirstMsg) return false;
+            // Check any of the 12 templates (nurture_uk may start from week2/3)
+            let hasAnyMsg = false;
+            for (let i = 1; i <= 12; i++) {
+                const wp = lead[`W.P_${i}`];
+                const wpTs = lead[`W.P_${i} TS`];
+                if ((wp && String(wp).trim() !== '' && String(wp).toLowerCase() !== 'no') ||
+                    (wpTs && String(wpTs).trim() !== '')) {
+                    hasAnyMsg = true;
+                    break;
+                }
+            }
+            if (!hasAnyMsg) return false;
             const rd = getReachoutDate(lead);
             if (!rd) return false;
             return isInRange(rd);

@@ -101,23 +101,28 @@ function getLeadLatestActivity(lead: any): Date {
 }
 
 function getReachoutDate(lead: any): Date | null {
-    const wp1 = lead["W.P_1"];
-    if (wp1 && wp1 !== "" && wp1 !== "No") {
-        const d = parseMsg(wp1).date;
-        if (d) return d;
-    }
-    const wp1Ts = lead["W.P_1 TS"];
-    if (wp1Ts) {
-        const d = parseTSDate(wp1Ts);
-        if (d) return d;
+    for (let i = 1; i <= 12; i++) {
+        const wp = lead[`W.P_${i}`];
+        if (wp && wp !== "" && wp !== "No") {
+            const d = parseMsg(wp).date;
+            if (d) return d;
+        }
+        const wpTs = lead[`W.P_${i} TS`];
+        if (wpTs) {
+            const d = parseTSDate(wpTs);
+            if (d) return d;
+        }
     }
     if (lead.last_outreach_at) {
         const d = new Date(lead.last_outreach_at);
         if (!isNaN(d.getTime())) return d;
     }
-    if (wp1 && wp1 !== "" && wp1 !== "No") {
-        const d = new Date(lead.created_at || 0);
-        if (!isNaN(d.getTime())) return d;
+    for (let i = 1; i <= 12; i++) {
+        const wp = lead[`W.P_${i}`];
+        if (wp && wp !== "" && wp !== "No") {
+            const d = new Date(lead.created_at || 0);
+            if (!isNaN(d.getTime())) return d;
+        }
     }
     return null;
 }
@@ -225,9 +230,10 @@ export async function GET(req: Request) {
                 mapped.source_loop = sourceLoop;
                 mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
                 mapped.phone = l.Phone || l.phone || '';
-                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || '';
-                mapped["WP_last_contacted"] = l.wp_last_contacted || l.WP_last_contacted || l.last_contacted || l["Last Contacted"] || '';
-                mapped.replied = l.Replied || l.replied || '';
+                mapped.name = l.name || l.Name || '';
+                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || (l.replied === true ? 'Yes' : '') || '';
+                mapped["WP_last_contacted"] = l.wp_last_contacted || l["Last Contacted"] || '';
+                mapped.replied = l.replied === true ? 'Yes' : (l.Replied || l.replied || '');
                 return mapped;
             });
 

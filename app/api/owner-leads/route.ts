@@ -6,6 +6,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');
     const to = searchParams.get('to');
+    const search = searchParams.get('search') || '';
     const pageParam = searchParams.get('page');
     const pageSizeParam = searchParams.get('pageSize');
 
@@ -31,6 +32,24 @@ export async function GET(req: Request) {
             let url = `${baseUrl}/${tableName}?select=*&offset=${offset}&limit=${limit}`;
             if (from) url += `&"Last Contacted"=gte.${from}`;
             if (to) url += `&"Last Contacted"=lte.${to}`;
+
+            if (search) {
+                const q = search.trim();
+                const isPrefixed = q.toLowerCase().startsWith('master-');
+                if (isPrefixed) {
+                    const idVal = q.split('-')[1];
+                    if (/^\d+$/.test(idVal)) {
+                        url += `&id=eq.${idVal}`;
+                    }
+                } else if (/^\d+$/.test(q)) {
+                    url += `&or=(id.eq.${q},"Contact Number".eq.${q})`;
+                } else if (q.startsWith('+') && /^\d+$/.test(q.slice(1))) {
+                    url += `&or=("Contact Number".eq.${q},"Contact Number".eq.${q.slice(1)})`;
+                } else {
+                    url += `&"Owner Name"=ilike.*${encodeURIComponent(q)}*`;
+                }
+            }
+
             return url;
         };
 

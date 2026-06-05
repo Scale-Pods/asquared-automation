@@ -34,30 +34,37 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ custo
                 return false;
             };
 
+            const isOwnerPrefix = searchVal.startsWith('master-');
+            const isNormalPrefix = ['intro-', 'intro_uk-', 'follow_up-', 'follow_up_uk-', 'leads-', 'nurture_leads-', 'nurture_leads_uk-'].some(p => searchVal.startsWith(p));
+
             try {
-                // 1. Check normal leads
-                const normalRes = await fetch(`/api/leads/overview?search=${encodeURIComponent(searchVal)}&type=normal&pageSize=20`);
-                if (normalRes.ok) {
-                    const normalData = await normalRes.json();
-                    const leadFound = (normalData.leads || []).find((l: any) => exactMatch(l, ['id', 'phone']));
-                    if (leadFound) {
-                        setFoundType("lead");
-                        setLoading(false);
-                        return;
+                // 1. Check normal leads if not explicitly an owner ID
+                if (!isOwnerPrefix) {
+                    const normalRes = await fetch(`/api/whatsapp/leads?search=${encodeURIComponent(searchVal)}&pageSize=20`);
+                    if (normalRes.ok) {
+                        const normalData = await normalRes.json();
+                        const leadFound = (normalData.leads || []).find((l: any) => exactMatch(l, ['id', 'phone']));
+                        if (leadFound) {
+                            setFoundType("lead");
+                            setLoading(false);
+                            return;
+                        }
                     }
                 }
 
-                // 2. Check owner leads
-                const ownersRes = await fetch(`/api/owner-leads?pageSize=100`);
-                if (ownersRes.ok) {
-                    const ownersData = await ownersRes.json();
-                    const ownerData = ownersData.owner_data || [];
-                    const ownerFound = ownerData.find((o: any) => exactMatch(o, ['id', 'contactNo', 'Phone', 'phone']));
-                    if (ownerFound) {
-                        setFoundOwner(ownerFound);
-                        setFoundType("owner");
-                        setLoading(false);
-                        return;
+                // 2. Check owner leads if not explicitly a normal lead ID
+                if (!isNormalPrefix) {
+                    const ownersRes = await fetch(`/api/owner-leads?search=${encodeURIComponent(searchVal)}`);
+                    if (ownersRes.ok) {
+                        const ownersData = await ownersRes.json();
+                        const ownerData = ownersData.owner_data || [];
+                        const ownerFound = ownerData.find((o: any) => exactMatch(o, ['id', 'contactNo', 'Phone', 'phone', 'Contact Number']));
+                        if (ownerFound) {
+                            setFoundOwner(ownerFound);
+                            setFoundType("owner");
+                            setLoading(false);
+                            return;
+                        }
                     }
                 }
 

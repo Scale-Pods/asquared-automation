@@ -64,13 +64,27 @@ export default function WhatsappDashboardPage() {
         unresponsive: 0
     });
     const [ownerStats, setOwnerStats] = useState({ reachouts: 0, replies: 0, msgsSent: 0 });
-    const [nurtureStats, setNurtureStats] = useState({ leadsContacted: 0, msgsSent: 0, replies: 0 });
-    const [nurtureUkStats, setNurtureUkStats] = useState({ leadsContacted: 0, msgsSent: 0, replies: 0 });
+    const [tableReachouts, setTableReachouts] = useState<Record<string, number>>({});
+    const [tableReplies, setTableReplies] = useState<Record<string, number>>({});
+    const [tableMsgsSent, setTableMsgsSent] = useState<Record<string, number>>({});
     const [donutData, setDonutData] = useState<any[]>([]);
 
-    const combinedContacted = (stats.contactedLeads || 0) + (nurtureStats.msgsSent || 0) + (nurtureUkStats.msgsSent || 0);
-    const combinedReachouts = (stats.totalLeads || 0) + (nurtureStats.leadsContacted || 0) + (nurtureUkStats.leadsContacted || 0);
-    const combinedReplies = (stats.totalReplies || 0) + (nurtureStats.replies || 0) + (nurtureUkStats.replies || 0);
+
+    const TABLE_LABELS: Record<string, string> = {
+        intro: 'intro',
+        intro_uk: 'intro_uk',
+        follow_up: 'follow_up',
+        follow_up_uk: 'follow_up_uk',
+        nurture_leads: 'nurture',
+        nurture_leads_uk: 'nurture_uk',
+    };
+    const makeSubtitle = (counts: Record<string, number>) =>
+        Object.entries(counts).filter(([, c]) => c > 0)
+            .map(([t, c]) => `${TABLE_LABELS[t] || t}: ${c}`).join(' · ') || '—';
+
+    const totalReachouts = Object.values(tableReachouts).reduce((a, b) => a + b, 0);
+    const totalRepliesAll = Object.values(tableReplies).reduce((a, b) => a + b, 0);
+    const totalMsgsSentAll = Object.values(tableMsgsSent).reduce((a, b) => a + b, 0);
     const [trendData, setTrendData] = useState<any[]>([]);
     const [repliedLeads, setRepliedLeads] = useState<any[]>([]);
     const [replyData, setReplyData] = useState<any[] | undefined>(undefined);
@@ -91,8 +105,9 @@ export default function WhatsappDashboardPage() {
                 const data = await fetchCached(`/api/whatsapp/overview?${q}`);
                 setStats(data.stats);
                 setOwnerStats(data.ownerStats);
-                setNurtureStats(data.nurtureStats || { leadsContacted: 0, msgsSent: 0, replies: 0 });
-                setNurtureUkStats(data.nurtureUkStats || { leadsContacted: 0, msgsSent: 0, replies: 0 });
+                setTableReachouts(data.tableReachouts || {});
+                setTableReplies(data.tableReplies || {});
+                setTableMsgsSent(data.tableMsgsSent || {});
                 setDonutData(data.donutData);
                 setTrendData(data.trendData);
                 setRepliedLeads(data.repliedLeads);
@@ -125,30 +140,30 @@ export default function WhatsappDashboardPage() {
                         <Users className="h-3.5 w-3.5" />
                     </div>
                     <h2 className="text-sm font-bold text-slate-900">Unknown & Secondary Data</h2>
-                    <span className="text-[10px] text-slate-400">intro, follow_up, nurture</span>
+                    <span className="text-[10px] text-slate-400">intro, intro_uk, follow_up, follow_up_uk, nurture, nurture_uk</span>
                 </div>
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                     <MetricCard
                         title="Total Whatsapp Reachouts"
-                        value={loading ? "..." : combinedReachouts.toLocaleString()}
-                        subtitle={`${(stats.totalLeads || 0).toLocaleString()} normal | ${((nurtureStats.leadsContacted || 0) + (nurtureUkStats.leadsContacted || 0)).toLocaleString()} nurture`}
+                        value={loading ? "..." : totalReachouts.toLocaleString()}
+                        subtitle={loading ? "" : makeSubtitle(tableReachouts)}
                         icon={Users}
                         theme="purple"
                         onClick={() => router.push('/dashboard/whatsapp/leads')}
                     />
                     <MetricCard
                         title="Total Replies"
-                        value={loading ? "..." : combinedReplies.toLocaleString()}
-                        subtitle={`${(stats.totalReplies || 0).toLocaleString()} normal | ${((nurtureStats.replies || 0) + (nurtureUkStats.replies || 0)).toLocaleString()} nurture`}
+                        value={loading ? "..." : totalRepliesAll.toLocaleString()}
+                        subtitle={loading ? "" : makeSubtitle(tableReplies)}
                         icon={MessageCircle}
                         theme="emerald"
                         onClick={() => setIsRepliesOpen(true)}
-                        info="This count is derived from the 'WP_Replied_track' column."
+                        info="This count is derived from W.P_Replied_1..10 and WP_Replied_track columns."
                     />
                     <MetricCard
                         title="Messages Sent"
-                        value={loading ? "..." : combinedContacted.toLocaleString()}
-                        subtitle={`${(stats.contactedLeads || 0).toLocaleString()} normal | ${((nurtureStats.msgsSent || 0) + (nurtureUkStats.msgsSent || 0)).toLocaleString()} nurture`}
+                        value={loading ? "..." : totalMsgsSentAll.toLocaleString()}
+                        subtitle={loading ? "" : makeSubtitle(tableMsgsSent)}
                         icon={Send}
                         theme="blue"
                     />

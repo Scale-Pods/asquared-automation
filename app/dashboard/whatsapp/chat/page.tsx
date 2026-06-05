@@ -31,7 +31,6 @@ import {
     Filter,
     Users,
     Send,
-    MessageCircle,
     MessageSquare,
     RefreshCw,
     Globe,
@@ -94,6 +93,12 @@ const getMsgDate = (raw: any) => {
 const parseTSDate = (tsValue: string): Date | null => {
     if (!tsValue) return null;
     const str = String(tsValue).trim();
+
+    // Plain ISO timestamp (e.g. "2026-06-04T16:50:14.552+05:30")
+    if (/^\d{4}-\d{2}-\d{2}T/.test(str)) {
+        const d = new Date(str);
+        return isNaN(d.getTime()) ? null : d;
+    }
 
     if (str.includes(' - ')) {
         const parts = str.split(' - ');
@@ -247,14 +252,6 @@ export default function WhatsappChatPage() {
         initialProcessed.current = true;
     }, [initialSelectedId, initialTab]);
 
-    const [pendingFilters, setPendingFilters] = useState<{
-        replyStatus: string[],
-        messageStatus: string[]
-    }>({
-        replyStatus: [],
-        messageStatus: []
-    });
-
     const [activeFilters, setActiveFilters] = useState<{
         replyStatus: string[],
         messageStatus: string[]
@@ -292,11 +289,20 @@ export default function WhatsappChatPage() {
             const matchesSearch = String(lead.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
                 String(lead.phone || "").includes(searchQuery);
 
-            const wtReplied = lead.WP_Replied_track;
             let hasReplied = false;
+            const wtReplied = lead.WP_Replied_track;
             if (wtReplied && String(wtReplied).trim() !== "") {
                 const s = String(wtReplied).trim().toLowerCase();
                 if (s !== "no" && s !== "none") hasReplied = true;
+            }
+            if (!hasReplied) {
+                for (let i = 1; i <= 10; i++) {
+                    const r = lead[`W.P_Replied_${i}`];
+                    if (r && String(r).trim() !== "" && String(r).trim().toLowerCase() !== "no") {
+                        hasReplied = true;
+                        break;
+                    }
+                }
             }
 
             const matchesReplyStatus = activeFilters.replyStatus.length === 0 ||
@@ -306,9 +312,17 @@ export default function WhatsappChatPage() {
             const matchesMessageStatus = activeFilters.messageStatus.length === 0 ||
                 activeFilters.messageStatus.some(status => {
                     const target = status.toLowerCase();
-                    for (let i = 1; i <= 12; i++) {
-                        const s = (lead[`W.P_${i} TS`] || "").toLowerCase();
-                        if (s.includes(target)) return true;
+                    const isIso = (ts: string) => /^\d{4}-\d{2}-\d{2}T/.test(ts);
+                    const matches = (ts: string) => {
+                        if (!ts) return false;
+                        if (isIso(ts)) return target === "sent";
+                        return ts.toLowerCase().includes(target);
+                    };
+                    for (let i = 1; i <= 4; i++) {
+                        if (matches(lead[`W.P_${i} TS`] || "")) return true;
+                    }
+                    for (let i = 1; i <= 10; i++) {
+                        if (matches(lead[`w_p_followup_ts_${i}`] || "")) return true;
                     }
                     return false;
                 });
@@ -335,7 +349,7 @@ export default function WhatsappChatPage() {
 
                 if (!hasActivityInRange) {
                     for (let i = 1; i <= 10; i++) {
-                        const d = getMsgDateWithFallback(lead, `W.P_FollowUp_${i}`);
+                        const d = getMsgDateWithFallback(lead, `W.P_FollowUp_${i}`, `w_p_followup_ts_${i}`);
                         if (d && d >= from && d <= to) {
                             hasActivityInRange = true;
                             break;
@@ -406,7 +420,7 @@ export default function WhatsappChatPage() {
                 leadHadSentInRange = true;
             }
             for (let i = 1; i <= 10; i++) {
-                const df = getMsgDateWithFallback(lead, `W.P_FollowUp_${i}`);
+                const df = getMsgDateWithFallback(lead, `W.P_FollowUp_${i}`, `w_p_followup_ts_${i}`);
                 if (df && isWithin(df)) {
                     sentCount++;
                     leadHadSentInRange = true;
@@ -433,15 +447,12 @@ export default function WhatsappChatPage() {
         };
     }, [filteredLeads, dateRange]);
 
-    const handleApplyFilters = () => { setActiveFilters(pendingFilters); };
     const handleResetFilters = () => {
-        const reset = { replyStatus: [], messageStatus: [] };
-        setPendingFilters(reset);
-        setActiveFilters(reset);
+        setActiveFilters({ replyStatus: [], messageStatus: [] });
     };
 
     const toggleFilter = (type: 'replyStatus' | 'messageStatus', value: string) => {
-        setPendingFilters(prev => {
+        setActiveFilters(prev => {
             const current = prev[type];
             if (current.includes(value)) {
                 return { ...prev, [type]: current.filter(v => v !== value) };
@@ -556,24 +567,22 @@ export default function WhatsappChatPage() {
                             </div>
 
                             <FilterSection title="Reply Status" >
-                                <FilterOption label="Replied" checked={pendingFilters.replyStatus.includes("Replied")} onCheckedChange={() => toggleFilter('replyStatus', "Replied")} />
-                                <FilterOption label="No Reply" checked={pendingFilters.replyStatus.includes("No Reply")} onCheckedChange={() => toggleFilter('replyStatus', "No Reply")} />
+                                <FilterOption label="Replied" checked={activeFilters.replyStatus.includes("Replied")} onCheckedChange={() => toggleFilter('replyStatus', "Replied")} />
+                                <FilterOption label="No Reply" checked={activeFilters.replyStatus.includes("No Reply")} onCheckedChange={() => toggleFilter('replyStatus', "No Reply")} />
                             </FilterSection>
 
                             <FilterSection title="Message Status">
-                                <FilterOption label="Read" checked={pendingFilters.messageStatus.includes("Read")} onCheckedChange={() => toggleFilter('messageStatus', "Read")} />
-                                <FilterOption label="Sent" checked={pendingFilters.messageStatus.includes("Sent")} onCheckedChange={() => toggleFilter('messageStatus', "Sent")} />
-                                <FilterOption label="Failed" checked={pendingFilters.messageStatus.includes("Failed")} onCheckedChange={() => toggleFilter('messageStatus', "Failed")} />
-                                <FilterOption label="Delivered" checked={pendingFilters.messageStatus.includes("Delivered")} onCheckedChange={() => toggleFilter('messageStatus', "Delivered")} />
-                                <FilterOption label="Deleted" checked={pendingFilters.messageStatus.includes("Deleted")} onCheckedChange={() => toggleFilter('messageStatus', "Deleted")} />
+                                <FilterOption label="Read" checked={activeFilters.messageStatus.includes("Read")} onCheckedChange={() => toggleFilter('messageStatus', "Read")} />
+                                <FilterOption label="Sent" checked={activeFilters.messageStatus.includes("Sent")} onCheckedChange={() => toggleFilter('messageStatus', "Sent")} />
+                                <FilterOption label="Failed" checked={activeFilters.messageStatus.includes("Failed")} onCheckedChange={() => toggleFilter('messageStatus', "Failed")} />
+                                <FilterOption label="Delivered" checked={activeFilters.messageStatus.includes("Delivered")} onCheckedChange={() => toggleFilter('messageStatus', "Delivered")} />
+                                <FilterOption label="Deleted" checked={activeFilters.messageStatus.includes("Deleted")} onCheckedChange={() => toggleFilter('messageStatus', "Deleted")} />
                             </FilterSection>
 
                             <div className="pt-2 border-t border-slate-100">
                                 <p className="text-[10px] text-slate-400 font-medium">Active Source</p>
                                 <p className="text-xs font-bold text-slate-700 mt-1">{currentTabLabel}</p>
                             </div>
-
-                            <Button className="w-full bg-slate-900 hover:bg-slate-800 text-white h-9" size="sm" onClick={handleApplyFilters}>Apply Filters</Button>
                         </CardContent>
                     </Card>
                 </div>
@@ -804,9 +813,11 @@ function CustomerRow({ lead: leadRaw, onClick }: { lead: ConsolidatedLead; onCli
 
 function MessageStatusBadge({ index, status }: { index: number, status: string }) {
     if (!status) return null;
-    const parts = status.split(' - ');
-    const statusText = parts[0].trim();
-    const rawTimestamp = parts.length > 1 ? parts[1].trim() : status.trim();
+
+    const isIsoTs = /^\d{4}-\d{2}-\d{2}T/.test(status.trim());
+    const parts = isIsoTs ? [] : status.split(' - ');
+    const statusText = isIsoTs ? 'Sent' : parts[0].trim();
+    const rawTimestamp = isIsoTs ? status.trim() : (parts.length > 1 ? parts[1].trim() : '');
 
     const formatTooltipDate = (dateStr: string) => {
         const d = new Date(dateStr.replace(/(\d{1,2})\/(\d{1,2})\/(\d{4})/, '$3-$2-$1'));
@@ -814,7 +825,7 @@ function MessageStatusBadge({ index, status }: { index: number, status: string }
         if (isNaN(finalDate.getTime())) return dateStr;
         const now = new Date();
         if (finalDate.toDateString() === now.toDateString()) return finalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        return finalDate.toLocaleString([], { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+        return finalDate.toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     };
 
     const formatted = statusText.charAt(0).toUpperCase() + statusText.slice(1).toLowerCase();

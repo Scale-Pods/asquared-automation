@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay } from 'date-fns';
-import { parseMsg, getMsgDateWithFallback, isWithinRange, fetchAllRows, processReplyLeads } from '@/lib/server-parsers';
+import { parseMsg, getMsgDateWithFallback, isWithinRange, fetchAllRows, processReplyLeads, parseTSDate } from '@/lib/server-parsers';
+import { consolidateLeads, RawLeadsResponse } from '@/lib/leads-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,20 +25,8 @@ function getLeadLatestActivity(lead: any): Date {
     for (let i = 1; i <= 12; i++) {
         const tsRaw = lead[`W.P_${i} TS`];
         let d = getMsgDate(lead[`W.P_${i}`] || lead.stage_data?.[`WhatsApp ${i}`]);
-        if (!d && tsRaw && tsRaw.includes(' - ')) {
-            const parts = tsRaw.split(' - ');
-            const datePart = parts[parts.length - 1].trim();
-            const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-            if (match) {
-                const tsDate = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-                if (!isNaN(tsDate.getTime())) {
-                    const rawLower = tsRaw.toLowerCase();
-                    if (rawLower.includes('read') || rawLower.includes('delivered') || rawLower.includes('failed')) {
-                        tsDate.setHours(0, 0, 0, 0);
-                    }
-                    d = tsDate;
-                }
-            }
+        if (!d && tsRaw) {
+            d = parseTSDate(tsRaw);
         }
         if (d && d > latestDate) latestDate = d;
     }
@@ -50,6 +39,12 @@ function getLeadLatestActivity(lead: any): Date {
         if (dReplied && dReplied > latestDate) latestDate = dReplied;
         const dFollow = getMsgDate(lead[`W.P_FollowUp_${i}`]);
         if (dFollow && dFollow > latestDate) latestDate = dFollow;
+        // Check snake_case follow-up TS (intro/follow_up tables after consolidation)
+        const fTs = lead[`w_p_followup_ts_${i}`];
+        if (fTs) {
+            const d = parseTSDate(fTs);
+            if (d && d > latestDate) latestDate = d;
+        }
     }
     return latestDate;
 }
@@ -61,20 +56,49 @@ function getReachoutDate(lead: any): Date | null {
         if (d) return d;
     }
     const wp1Ts = lead["W.P_1 TS"];
-    if (wp1Ts && wp1Ts.includes(' - ')) {
-        const parts = wp1Ts.split(' - ');
-        const datePart = parts[parts.length - 1].trim();
-        const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (match) {
-            return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+    if (wp1Ts) {
+        // Handle "Status - DD/MM/YYYY HH:MM" format
+        if (wp1Ts.includes(' - ')) {
+            const parts = wp1Ts.split(' - ');
+            const datePart = parts[parts.length - 1].trim();
+            const match = datePart.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            if (match) {
+                return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+            }
+        }
+        // Handle plain ISO timestamp (intro/follow_up tables)
+        if (/^\d{4}-\d{2}-\d{2}T/.test(wp1Ts)) {
+            const d = new Date(wp1Ts);
+            if (!isNaN(d.getTime())) return d;
         }
     }
-    // leads table uses last_outreach_at instead of W.P_1
+    // leads table uses last_outreach_at
     if (lead.last_outreach_at) {
         const d = new Date(lead.last_outreach_at);
         if (!isNaN(d.getTime())) return d;
     }
+    // Fallback: message exists but date undetectable — use created_at
+    if (wp1 && wp1 !== "" && wp1 !== "No") {
+        const d = new Date(lead.created_at || 0);
+        if (!isNaN(d.getTime())) return d;
+    }
     return null;
+}
+
+// Returns date for a follow-up message, checking the snake_case TS field
+function getFollowUpDate(lead: any, i: number): Date | null {
+    const raw = lead[`W.P_FollowUp_${i}`];
+    if (!raw || !String(raw).trim() || String(raw).trim().toLowerCase() === "no") return null;
+    const d = parseMsg(raw).date;
+    if (d) return d;
+    // w_p_followup_ts_${i} is the snake_case TS column from intro/follow_up tables
+    const ts = lead[`w_p_followup_ts_${i}`];
+    if (ts) {
+        const tsDate = parseTSDate(String(ts));
+        if (tsDate) return tsDate;
+    }
+    // Fallback to created_at
+    return lead.created_at ? new Date(lead.created_at) : null;
 }
 
 export async function GET(req: Request) {
@@ -162,7 +186,17 @@ export async function GET(req: Request) {
             if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureUkReplies++;
         });
 
-        const allLeads = [...leadsRows, ...introRows, ...introUkRows, ...followUpRows, ...followUpUkRows];
+        // Consolidate intro/follow_up rows to normalize field names (space→underscore, TS mappings, etc.)
+        const rawForConsolidation: RawLeadsResponse = {
+            intro: introRows,
+            intro_uk: introUkRows,
+            follow_up: followUpRows,
+            follow_up_uk: followUpUkRows,
+        };
+        const consolidatedNormalLeads = consolidateLeads(rawForConsolidation);
+
+        // Combine consolidated normal leads with leads table (raw rows use last_outreach_at)
+        const allLeads = [...consolidatedNormalLeads, ...leadsRows];
 
         const filteredLeads = allLeads.filter((lead: any) => {
             const rd = getReachoutDate(lead);
@@ -177,10 +211,19 @@ export async function GET(req: Request) {
         let totalReplies = 0;
         const repliedLeads: any[] = [];
 
+        // Per-table breakdowns
+        const tableReachouts: Record<string, number> = {};
+        const tableReplies: Record<string, number> = {};
+        const tableMsgsSent: Record<string, number> = {};
+
         filteredLeads.forEach((lead: any) => {
+            const tKey: string = lead.source_table || 'unknown';
+            tableReachouts[tKey] = (tableReachouts[tKey] || 0) + 1;
+
             let leadSentCount = 0;
             let hasWPInDate = false;
 
+            // Count W.P_1..12 initial templates
             for (let i = 1; i <= 12; i++) {
                 const d = getMsgDateWithFallback(lead, `W.P_${i}`);
                 if (d && isInRange(d)) {
@@ -188,13 +231,17 @@ export async function GET(req: Request) {
                     hasWPInDate = true;
                 }
             }
+
+            // Single legacy follow-up field
             const fup = getMsgDateWithFallback(lead, "W.P_FollowUp", "W.P_FollowUp TS");
             if (fup && isInRange(fup)) {
                 leadSentCount++;
                 hasWPInDate = true;
             }
+
+            // W.P_FollowUp_1..10 with snake_case TS field support
             for (let i = 1; i <= 10; i++) {
-                const d = getMsgDateWithFallback(lead, `W.P_FollowUp_${i}`);
+                const d = getFollowUpDate(lead, i);
                 if (d && isInRange(d)) {
                     leadSentCount++;
                     hasWPInDate = true;
@@ -204,8 +251,10 @@ export async function GET(req: Request) {
             if (hasWPInDate) {
                 messagesSent += leadSentCount;
                 uniqueLeadsContacted++;
+                tableMsgsSent[tKey] = (tableMsgsSent[tKey] || 0) + leadSentCount;
             }
 
+            // Reply detection: check WP_Replied_track, then W.P_Replied_1..10
             const replyVal = lead["WP_Replied_track"];
             let isRepliedInRange = false;
 
@@ -218,9 +267,22 @@ export async function GET(req: Request) {
                 }
             }
 
+            // Fallback: W.P_Replied_1..10 for intro/follow_up consolidated leads
+            if (!isRepliedInRange) {
+                for (let i = 1; i <= 10; i++) {
+                    const rVal = lead[`W.P_Replied_${i}`];
+                    if (rVal && String(rVal).trim() !== '' && String(rVal).toLowerCase() !== 'no') {
+                        const parsed = parseMsg(rVal);
+                        const replyDate = parsed.date || new Date(lead.created_at);
+                        if (isInRange(replyDate)) { isRepliedInRange = true; break; }
+                    }
+                }
+            }
+
             if (isRepliedInRange) {
                 totalReplies++;
                 repliedLeads.push(lead);
+                tableReplies[tKey] = (tableReplies[tKey] || 0) + 1;
             } else if (hasWPInDate) {
                 waiting++;
             }
@@ -233,6 +295,18 @@ export async function GET(req: Request) {
                 if (isRepliedInRange) dailyGroups[dStr].replied += 1;
             }
         });
+
+        // Merge nurture table counts into per-table breakdowns
+        if (nurtureLeadsContacted > 0) tableReachouts['nurture_leads'] = nurtureLeadsContacted;
+        if (nurtureUkLeadsContacted > 0) tableReachouts['nurture_leads_uk'] = nurtureUkLeadsContacted;
+        if (nurtureReplies > 0) tableReplies['nurture_leads'] = nurtureReplies;
+        if (nurtureUkReplies > 0) tableReplies['nurture_leads_uk'] = nurtureUkReplies;
+        if (nurtureMsgsSent > 0) tableMsgsSent['nurture_leads'] = nurtureMsgsSent;
+        if (nurtureUkMsgsSent > 0) tableMsgsSent['nurture_leads_uk'] = nurtureUkMsgsSent;
+
+        const totalReachouts = Object.values(tableReachouts).reduce((a, b) => a + b, 0);
+        const totalRepliesAll = Object.values(tableReplies).reduce((a, b) => a + b, 0);
+        const totalMsgsSentAll = Object.values(tableMsgsSent).reduce((a, b) => a + b, 0);
 
         let ownerReachouts = 0, ownerReplies = 0, ownerMsgsSent = 0;
         masterLeads.forEach((o: any) => {
@@ -256,30 +330,28 @@ export async function GET(req: Request) {
         });
 
         const stats = {
-            totalLeads: filteredLeads.length,
-            contactedLeads: messagesSent,
-            totalReplies,
-            replied: totalReplies,
+            totalLeads: totalReachouts,
+            contactedLeads: totalMsgsSentAll,
+            totalReplies: totalRepliesAll,
+            replied: totalRepliesAll,
             waiting,
             nurture: 0,
             unresponsive: filteredLeads.length - uniqueLeadsContacted
         };
 
         const ownerStats = { reachouts: ownerReachouts, replies: ownerReplies, msgsSent: ownerMsgsSent };
-        const nurtureStats = { leadsContacted: nurtureLeadsContacted, msgsSent: nurtureMsgsSent, replies: nurtureReplies };
-        const nurtureUkStats = { leadsContacted: nurtureUkLeadsContacted, msgsSent: nurtureUkMsgsSent, replies: nurtureUkReplies };
 
         const donutData = [
-            { name: 'Total Leads', value: filteredLeads.length, color: '#8b5cf6' },
-            { name: 'Messages Sent', value: messagesSent, color: '#3b82f6' },
-            { name: 'Total Replies', value: totalReplies, color: '#10b981' },
+            { name: 'Total Leads', value: totalReachouts, color: '#8b5cf6' },
+            { name: 'Messages Sent', value: totalMsgsSentAll, color: '#3b82f6' },
+            { name: 'Total Replies', value: totalRepliesAll, color: '#10b981' },
         ];
 
         const trendData = Object.values(dailyGroups)
             .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
             .slice(-7);
 
-        return NextResponse.json({ stats, ownerStats, nurtureStats, nurtureUkStats, donutData, trendData, repliedLeads, replyData: processReplyLeads(repliedLeads) }, {
+        return NextResponse.json({ stats, ownerStats, tableReachouts, tableReplies, tableMsgsSent, donutData, trendData, repliedLeads, replyData: processReplyLeads(repliedLeads) }, {
             headers: {
                 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
                 'Pragma': 'no-cache',

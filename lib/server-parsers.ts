@@ -60,6 +60,11 @@ export function parseTSDate(tsValue: string): Date | null {
         const isoDate = new Date(datePart.replace(' ', 'T'));
         if (!isNaN(isoDate.getTime())) return isoDate;
     }
+    // Handle plain ISO timestamp (e.g. 2026-06-04T16:50:14.552+05:30)
+    if (/^\d{4}-\d{2}-\d{2}T/.test(str)) {
+        const d = new Date(str);
+        if (!isNaN(d.getTime())) return d;
+    }
     return null;
 }
 

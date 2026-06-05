@@ -83,11 +83,9 @@ export default function WhatsappLeadsPage() {
     const [ownerLeads, setOwnerLeads] = useState<any[]>([]);
     const [loadingOwners, setLoadingOwners] = useState(false);
 
-    // Filter State
-    const [dateRange, setDateRange] = useState<any>({
-        from: subDays(new Date(), 7),
-        to: new Date(),
-    });
+    // Stable ISO string dates — avoids Object reference inequality re-firing effects
+    const [dateFrom, setDateFrom] = useState(() => startOfDay(subDays(new Date(), 7)).toISOString());
+    const [dateTo, setDateTo] = useState(() => endOfDay(new Date()).toISOString());
 
     const [activeFilters, setActiveFilters] = useState<{
         replyStatus: string[],
@@ -112,38 +110,12 @@ export default function WhatsappLeadsPage() {
         return 'all';
     };
 
-    const loadLeads = async () => {
-        setLoading(true);
-        const q = new URLSearchParams();
-        if (dateRange?.from) {
-            q.set('from', startOfDay(dateRange.from).toISOString());
-            q.set('to', endOfDay(dateRange.to || dateRange.from).toISOString());
-        }
-        if (searchQuery) q.set('search', searchQuery);
-        q.set('replyStatus', replyStatusToApi(activeFilters.replyStatus));
-        q.set('loop', loopsToApi(activeFilters.loops));
-        q.set('page', String(currentPage));
-        q.set('pageSize', String(leadsPerPage));
-        try {
-            const res = await fetch(`/api/whatsapp/leads?${q}`);
-            const data = await res.json();
-            setLeads(data.leads || []);
-            setTotal(data.total || 0);
-        } catch (e) {
-            console.error("Leads fetch error:", e);
-            setLeads([]);
-            setTotal(0);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const loadOwners = async () => {
         setLoadingOwners(true);
-        const q = new URLSearchParams({
-            from: startOfDay(dateRange.from).toISOString(),
-            to: endOfDay(dateRange.to).toISOString()
-        });
+        const q = new URLSearchParams();
+        if (dateFrom) q.set('from', dateFrom);
+        if (dateTo) q.set('to', dateTo);
         try {
             const res = await fetch(`/api/owner-leads?${q}`);
             const data = await res.json();
@@ -156,15 +128,43 @@ export default function WhatsappLeadsPage() {
     };
 
     useEffect(() => {
-        if (activeTab === "leads") {
-            loadLeads();
-        } else {
+        if (activeTab !== "leads") {
             loadOwners();
+            return;
         }
+
+        const controller = new AbortController();
+        setLoading(true);
+
+        const q = new URLSearchParams();
+        if (dateFrom) q.set('from', dateFrom);
+        if (dateTo) q.set('to', dateTo);
+        if (searchQuery) q.set('search', searchQuery);
+        q.set('replyStatus', replyStatusToApi(activeFilters.replyStatus));
+        q.set('loop', loopsToApi(activeFilters.loops));
+        q.set('page', String(currentPage));
+        q.set('pageSize', String(leadsPerPage));
+
+        fetch(`/api/whatsapp/leads?${q}`, { signal: controller.signal })
+            .then(r => r.json())
+            .then(data => {
+                setLeads(data.leads || []);
+                setTotal(data.total || 0);
+            })
+            .catch(e => {
+                if (e.name !== 'AbortError') {
+                    setLeads([]);
+                    setTotal(0);
+                }
+            })
+            .finally(() => setLoading(false));
+
+        return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         activeTab,
-        dateRange?.from,
-        dateRange?.to,
+        dateFrom,
+        dateTo,
         searchQuery,
         activeFilters.replyStatus.join(','),
         activeFilters.loops.join(','),
@@ -190,7 +190,8 @@ export default function WhatsappLeadsPage() {
 
     const resetFilters = () => {
         setActiveFilters({ replyStatus: [], loops: [] });
-        setDateRange({ from: undefined, to: undefined });
+        setDateFrom(startOfDay(subDays(new Date(), 7)).toISOString());
+        setDateTo(endOfDay(new Date()).toISOString());
         setSearchQuery("");
         setCurrentPage(1);
     };
@@ -272,7 +273,7 @@ export default function WhatsappLeadsPage() {
                         </button>
                     </div>
 
-                    {(activeFilters.replyStatus.length > 0 || activeFilters.loops.length > 0 || dateRange.from || searchQuery) && (
+                    {(activeFilters.replyStatus.length > 0 || activeFilters.loops.length > 0 || searchQuery) && (
                         <Button
                             variant="ghost"
                             size="sm"
@@ -283,7 +284,8 @@ export default function WhatsappLeadsPage() {
                         </Button>
                     )}
                     <DateRangePicker onUpdate={({ range }) => {
-                        setDateRange({ from: range?.from, to: range?.to });
+                        setDateFrom(range?.from ? startOfDay(range.from).toISOString() : '');
+                        setDateTo(range?.to ? endOfDay(range.to).toISOString() : '');
                         setCurrentPage(1);
                     }} />
                 </div>

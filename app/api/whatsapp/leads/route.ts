@@ -64,7 +64,7 @@ export async function GET(req: Request) {
         };
         let targetTable: string | null = null;
         if (search) {
-            const dashIdx = search.lastIndexOf('-');
+            const dashIdx = search.indexOf('-');
             if (dashIdx > 0) {
                 const prefix = search.slice(0, dashIdx).toLowerCase();
                 targetTable = ID_PREFIX_MAP[prefix] ?? null;
@@ -198,10 +198,10 @@ export async function GET(req: Request) {
         if (search) {
             const q = search.toLowerCase();
             consolidatedLeads = consolidatedLeads.filter((l: ConsolidatedLead) =>
-                l.id.toLowerCase().includes(q) ||
-                l.name.toLowerCase().includes(q) ||
-                l.email.toLowerCase().includes(q) ||
-                l.phone.toLowerCase().includes(q)
+                (l.id || '').toLowerCase().includes(q) ||
+                (l.name || '').toLowerCase().includes(q) ||
+                (l.email || '').toLowerCase().includes(q) ||
+                (l.phone || '').toLowerCase().includes(q)
             );
         }
 

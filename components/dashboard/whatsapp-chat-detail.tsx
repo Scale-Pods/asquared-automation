@@ -60,7 +60,12 @@ function buildTimeline(leadData: any): any[] {
 
     const parseTsDate = (tsRaw: string | null): string | null => {
         if (!tsRaw) return null;
-        const parts = tsRaw.split(' - ');
+        const str = String(tsRaw).trim();
+        if (/^\d{4}-\d{2}-\d{2}T/.test(str)) {
+            const d = new Date(str);
+            return isNaN(d.getTime()) ? null : d.toISOString();
+        }
+        const parts = str.split(' - ');
         if (parts.length < 2) return null;
         const datePart = parts[1].trim();
         const d = new Date(datePart.replace(/(^\d{1,2})\/(\d{1,2})\/(\d{4})/, '$3-$2-$1').replace(' ', 'T'));
@@ -70,33 +75,43 @@ function buildTimeline(leadData: any): any[] {
     const f = leadData;
     let seq = 1;
 
-    for (let i = 1; i <= 12; i++) {
-        const raw = f[`W.P_${i}`] || f.stage_data?.[`WhatsApp ${i}`];
+    // Section 1: initial bot templates — always first, in fixed order
+    const templates: any[] = [];
+    for (const key of ['W.P_1', 'W.P_2', 'W.P_3', 'W.P_4']) {
+        const raw = f[key] || f.stage_data?.[`WhatsApp ${key.replace('W.P_', '')}`];
         if (!raw) continue;
-        const tsRaw: string | null = f[`W.P_${i} TS`] || null;
-        const msg = parseMsg(raw, `W.P_${i}`, 'bot', seq++);
-        if (msg) {
-            (msg as any).tsStatus = tsRaw;
-            if (!msg.date) msg.date = parseTsDate(tsRaw);
-            timeline.push(msg);
-        }
+        const tsRaw: string | null = f[`${key} TS`] || null;
+        const msg = parseMsg(raw, key, 'bot', seq++);
+        if (!msg) continue;
+        (msg as any).tsStatus = tsRaw;
+        if (!msg.date) msg.date = parseTsDate(tsRaw);
+        templates.push(msg);
     }
 
-    const initialFollowUpRaw = f["W.P_FollowUp"] || f.stage_data?.["WhatsApp FollowUp"];
-    const initialFollowUpMsg = parseMsg(initialFollowUpRaw, "W.P_FollowUp", "bot", seq++);
-    if (initialFollowUpMsg) timeline.push(initialFollowUpMsg);
-
+    // Section 2: user replies and bot follow-ups — sorted chronologically
+    const cycle: any[] = [];
     for (let i = 1; i <= 10; i++) {
         const rRaw = f[`W.P_Replied_${i}`];
         const rMsg = parseMsg(rRaw, `W.P_Replied_${i}`, 'user', seq++);
-        if (rMsg) timeline.push(rMsg);
+        if (rMsg) cycle.push(rMsg);
 
         const fRaw = f[`W.P_FollowUp_${i}`];
+        const fTs: string | null = f[`w_p_followup_ts_${i}`] || null;
         const fMsg = parseMsg(fRaw, `W.P_FollowUp_${i}`, 'bot', seq++);
-        if (fMsg) timeline.push(fMsg);
+        if (fMsg) {
+            (fMsg as any).tsStatus = fTs;
+            if (!fMsg.date) fMsg.date = parseTsDate(fTs);
+            cycle.push(fMsg);
+        }
     }
+    cycle.sort((a, b) => {
+        if (!a.date && !b.date) return a.sequence - b.sequence;
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
 
-    return timeline;
+    return [...templates, ...cycle];
 }
 
 export function WhatsAppChatDetail({ customerId, onClose }: WhatsAppChatDetailProps) {

@@ -76,8 +76,7 @@ function mapIntroLead(l: any, idx: number, prefix: string): ConsolidatedLead {
         }
     });
 
-    const wpKeys = ["W.P_1", "W.P_2"];
-    wpKeys.forEach((key, i) => {
+    ["W.P_1", "W.P_2", "W.P_3", "W.P_4"].forEach((key, i) => {
         const val = getVal(l, [key]);
         if (val) {
             const stageName = `WhatsApp ${i + 1}`;
@@ -121,6 +120,18 @@ function mapIntroLead(l: any, idx: number, prefix: string): ConsolidatedLead {
         "W.P_Replied": getVal(l, ["W.P_Replied", "whatsapp_replied"]),
         "W.P_1 TS": getVal(l, ["W.P_1 TS", "WhatsApp 1 TS", "W.P_FollowUp TS", "WP_FollowUp TS"]),
         "W.P_2 TS": getVal(l, ["W.P_2 TS", "WhatsApp 2 TS"]),
+        "W.P_3 TS": getVal(l, ["W.P_3 TS"]),
+        "W.P_4 TS": getVal(l, ["W.P_4 TS"]),
+        w_p_followup_ts_1: l["w_p_followup_ts_1"] || null,
+        w_p_followup_ts_2: l["w_p_followup_ts_2"] || null,
+        w_p_followup_ts_3: l["w_p_followup_ts_3"] || null,
+        w_p_followup_ts_4: l["w_p_followup_ts_4"] || null,
+        w_p_followup_ts_5: l["w_p_followup_ts_5"] || null,
+        w_p_followup_ts_6: l["w_p_followup_ts_6"] || null,
+        w_p_followup_ts_7: l["w_p_followup_ts_7"] || null,
+        w_p_followup_ts_8: l["w_p_followup_ts_8"] || null,
+        w_p_followup_ts_9: l["w_p_followup_ts_9"] || null,
+        w_p_followup_ts_10: l["w_p_followup_ts_10"] || null,
         unsubscribed: getVal(l, ["Unsubscribed", "Unsubscribed text"]) || "No",
         WP_Replied_track: getVal(l, ["WP_Replied_track"]) || null,
         WP_last_contacted: getVal(l, ["WP_last_contacted"]),
@@ -151,11 +162,14 @@ function mapFollowUpLead(l: any, idx: number, prefix: string): ConsolidatedLead 
         }
     });
 
-    const wpVal = getVal(l, ["W.P_FollowUp"]);
-    if (wpVal) {
-        stages.push("WhatsApp FollowUp");
-        stage_data["WhatsApp FollowUp"] = wpVal;
-    }
+    ["W.P_1", "W.P_2", "W.P_3", "W.P_4"].forEach((key, i) => {
+        const val = getVal(l, [key, ...(i === 0 ? ["W.P_FollowUp"] : [])]);
+        if (val) {
+            const stageName = `WhatsApp ${i + 1}`;
+            stages.push(stageName);
+            stage_data[stageName] = val;
+        }
+    });
 
     return {
         id: `${prefix}-${getVal(l, ["Lead ID", "id"]) || idx}`,
@@ -186,6 +200,16 @@ function mapFollowUpLead(l: any, idx: number, prefix: string): ConsolidatedLead 
         "W.P_2 TS": getVal(l, ["W.P_2 TS", "WhatsApp 2 TS"]),
         "W.P_3 TS": getVal(l, ["W.P_3 TS"]),
         "W.P_4 TS": getVal(l, ["W.P_4 TS"]),
+        w_p_followup_ts_1: l["w_p_followup_ts_1"] || null,
+        w_p_followup_ts_2: l["w_p_followup_ts_2"] || null,
+        w_p_followup_ts_3: l["w_p_followup_ts_3"] || null,
+        w_p_followup_ts_4: l["w_p_followup_ts_4"] || null,
+        w_p_followup_ts_5: l["w_p_followup_ts_5"] || null,
+        w_p_followup_ts_6: l["w_p_followup_ts_6"] || null,
+        w_p_followup_ts_7: l["w_p_followup_ts_7"] || null,
+        w_p_followup_ts_8: l["w_p_followup_ts_8"] || null,
+        w_p_followup_ts_9: l["w_p_followup_ts_9"] || null,
+        w_p_followup_ts_10: l["w_p_followup_ts_10"] || null,
         unsubscribed: getVal(l, ["Unsubscribed", "Unsubscribed text"]) || "No",
         WP_Replied_track: getVal(l, ["WP_Replied_track"]) || null,
         WP_last_contacted: getVal(l, ["WP_last_contacted"]),

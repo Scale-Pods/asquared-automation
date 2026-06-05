@@ -41,33 +41,58 @@ export default function WhatsappAnalyticsPage() {
     const [nurtureUkStats, setNurtureUkStats] = useState({ totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
     const [trendData, setTrendData] = useState<any[]>([]);
     const [roundData, setRoundData] = useState<any[]>([]);
-    const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
-        from: subDays(new Date(), 7),
-        to: new Date()
-    });
+    const [dateFrom, setDateFrom] = useState(() => startOfDay(subDays(new Date(), 7)).toISOString());
+    const [dateTo, setDateTo] = useState(() => endOfDay(new Date()).toISOString());
+
+    const TABLE_LABELS: Record<string, string> = {
+        intro: 'Intro', intro_uk: 'Intro UK',
+        follow_up: 'Follow Up', follow_up_uk: 'Follow Up UK',
+        nurture_leads: 'Nurture', nurture_leads_uk: 'Nurture UK',
+    };
 
     useEffect(() => {
-        const from = dateRange?.from;
-        const to = dateRange?.to;
-        if (!from || !to) return;
+        if (!dateFrom || !dateTo) return;
         const fetchData = async () => {
             setLoading(true);
-            const q = new URLSearchParams({
-                from: startOfDay(from).toISOString(),
-                to: endOfDay(to).toISOString()
-            });
+            const q = new URLSearchParams({ from: dateFrom, to: dateTo });
             try {
-                const res = await fetch(`/api/whatsapp/analytics?${q}`);
+                // Reuse overview API — all needed data is already computed there
+                const res = await fetch(`/api/whatsapp/overview?${q}`);
                 const data = await res.json();
+
+                const totalLeads: number = data.stats?.totalLeads || 0;
+                const totalSent: number = data.stats?.contactedLeads || 0;
+                const repliedCount: number = data.stats?.totalReplies || 0;
+                const replyRate = totalLeads > 0 ? `${(repliedCount / totalLeads * 100).toFixed(1)}%` : '0%';
+
                 setStats({
-                    ...data.stats,
-                    loopData: data.roundData || []
+                    totalSent,
+                    repliedCount,
+                    totalLeads,
+                    replyRate,
+                    loopData: Object.entries(data.tableReachouts || {})
+                        .filter(([, v]) => (v as number) > 0)
+                        .map(([t, v]) => ({
+                            name: TABLE_LABELS[t] || t,
+                            value: v as number,
+                            replies: (data.tableReplies || {})[t] || 0,
+                        }))
                 });
-                setOwnerStats(data.ownerStats);
-                setNurtureStats(data.nurtureStats || { totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
-                setNurtureUkStats(data.nurtureUkStats || { totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
-                setTrendData(data.trendData);
-                setRoundData(data.roundData || []);
+                setOwnerStats(data.ownerStats || { reachouts: 0, replies: 0, msgsSent: 0 });
+
+                const mkNurture = (key: string) => {
+                    const total: number = (data.tableReachouts || {})[key] || 0;
+                    const sent: number = (data.tableMsgsSent || {})[key] || 0;
+                    const replied: number = (data.tableReplies || {})[key] || 0;
+                    return { totalSent: sent, replied, total, replyRate: total > 0 ? `${(replied / total * 100).toFixed(1)}%` : '0%' };
+                };
+                setNurtureStats(mkNurture('nurture_leads'));
+                setNurtureUkStats(mkNurture('nurture_leads_uk'));
+                setTrendData(data.trendData || []);
+                setRoundData(Object.entries(data.tableReachouts || {})
+                    .filter(([, v]) => (v as number) > 0)
+                    .map(([t, v]) => ({ name: TABLE_LABELS[t] || t, value: v as number }))
+                );
             } catch (e) {
                 console.error("Analytics fetch error:", e);
             } finally {
@@ -75,7 +100,7 @@ export default function WhatsappAnalyticsPage() {
             }
         };
         fetchData();
-    }, [dateRange?.from, dateRange?.to]);
+    }, [dateFrom, dateTo]);
 
     return (
         <div className="space-y-4 pb-4 relative min-h-[500px]">
@@ -87,7 +112,10 @@ export default function WhatsappAnalyticsPage() {
                     <p className="text-slate-500 text-sm">Track campaign performance and lead engagement</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <DateRangePicker onUpdate={({ range }) => setDateRange({ from: range?.from, to: range?.to })} />
+                    <DateRangePicker onUpdate={({ range }) => {
+                        setDateFrom(range?.from ? startOfDay(range.from).toISOString() : '');
+                        setDateTo(range?.to ? endOfDay(range.to).toISOString() : '');
+                    }} />
                     <Button variant="outline" size="sm" onClick={() => window.location.reload()} className="h-10">
                         <RefreshCw className="h-4 w-4" />
                     </Button>

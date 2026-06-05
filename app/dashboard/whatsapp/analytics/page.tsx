@@ -15,7 +15,7 @@ import {
     Cell
 } from "recharts";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { TrendingUp, Users, MessageSquare, Send, RefreshCw, BarChart3, Building2, Info, Leaf, Globe, Flag } from "lucide-react";
+import { TrendingUp, Users, MessageSquare, Send, RefreshCw, Building2, Info } from "lucide-react";
 import {
     Tooltip as UITooltip,
     TooltipContent,
@@ -23,7 +23,6 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { subDays, startOfDay, endOfDay } from "date-fns";
-import { ConsolidatedLead } from "@/lib/leads-utils";
 import { Button } from "@/components/ui/button";
 import { ASLoader } from "@/components/as-loader";
 
@@ -37,10 +36,7 @@ export default function WhatsappAnalyticsPage() {
         loopData: [] as any[]
     });
     const [ownerStats, setOwnerStats] = useState({ reachouts: 0, replies: 0, msgsSent: 0 });
-    const [nurtureStats, setNurtureStats] = useState({ totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
-    const [nurtureUkStats, setNurtureUkStats] = useState({ totalSent: 0, replied: 0, total: 0, replyRate: "0%" });
     const [trendData, setTrendData] = useState<any[]>([]);
-    const [roundData, setRoundData] = useState<any[]>([]);
     const [dateFrom, setDateFrom] = useState(() => startOfDay(subDays(new Date(), 7)).toISOString());
     const [dateTo, setDateTo] = useState(() => endOfDay(new Date()).toISOString());
 
@@ -56,43 +52,35 @@ export default function WhatsappAnalyticsPage() {
             setLoading(true);
             const q = new URLSearchParams({ from: dateFrom, to: dateTo });
             try {
-                // Reuse overview API — all needed data is already computed there
                 const res = await fetch(`/api/whatsapp/overview?${q}`);
                 const data = await res.json();
 
-                const totalLeads: number = data.stats?.totalLeads || 0;
-                const totalSent: number = data.stats?.contactedLeads || 0;
-                const repliedCount: number = data.stats?.totalReplies || 0;
-                const replyRate = totalLeads > 0 ? `${(repliedCount / totalLeads * 100).toFixed(1)}%` : '0%';
+                // Combine ALL tables into single aggregated numbers
+                const tableReachouts: Record<string, number> = data.tableReachouts || {};
+                const tableReplies: Record<string, number>   = data.tableReplies   || {};
+                const tableMsgsSent: Record<string, number>  = data.tableMsgsSent  || {};
+
+                // Total across every table (including nurture)
+                const totalLeads   = Object.values(tableReachouts).reduce((a, b) => a + b, 0);
+                const totalReplied = Object.values(tableReplies).reduce((a, b) => a + b, 0);
+                const totalSent    = Object.values(tableMsgsSent).reduce((a, b) => a + b, 0);
+                const replyRate    = totalLeads > 0 ? `${(totalReplied / totalLeads * 100).toFixed(1)}%` : '0%';
 
                 setStats({
                     totalSent,
-                    repliedCount,
+                    repliedCount: totalReplied,
                     totalLeads,
                     replyRate,
-                    loopData: Object.entries(data.tableReachouts || {})
+                    loopData: Object.entries(tableReachouts)
                         .filter(([, v]) => (v as number) > 0)
                         .map(([t, v]) => ({
                             name: TABLE_LABELS[t] || t,
                             value: v as number,
-                            replies: (data.tableReplies || {})[t] || 0,
+                            replies: tableReplies[t] || 0,
                         }))
                 });
                 setOwnerStats(data.ownerStats || { reachouts: 0, replies: 0, msgsSent: 0 });
-
-                const mkNurture = (key: string) => {
-                    const total: number = (data.tableReachouts || {})[key] || 0;
-                    const sent: number = (data.tableMsgsSent || {})[key] || 0;
-                    const replied: number = (data.tableReplies || {})[key] || 0;
-                    return { totalSent: sent, replied, total, replyRate: total > 0 ? `${(replied / total * 100).toFixed(1)}%` : '0%' };
-                };
-                setNurtureStats(mkNurture('nurture_leads'));
-                setNurtureUkStats(mkNurture('nurture_leads_uk'));
                 setTrendData(data.trendData || []);
-                setRoundData(Object.entries(data.tableReachouts || {})
-                    .filter(([, v]) => (v as number) > 0)
-                    .map(([t, v]) => ({ name: TABLE_LABELS[t] || t, value: v as number }))
-                );
             } catch (e) {
                 console.error("Analytics fetch error:", e);
             } finally {
@@ -105,6 +93,7 @@ export default function WhatsappAnalyticsPage() {
     return (
         <div className="space-y-4 pb-4 relative min-h-[500px]">
             {loading && <ASLoader />}
+
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
@@ -122,7 +111,7 @@ export default function WhatsappAnalyticsPage() {
                 </div>
             </div>
 
-            {/* Core Metrics */}
+            {/* Core Metrics — combined across ALL tables */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <StatCard
                     title="Total Messages Sent"
@@ -137,21 +126,21 @@ export default function WhatsappAnalyticsPage() {
                     icon={MessageSquare}
                     color="text-emerald-600"
                     bg="bg-emerald-50"
-                    info="This count is derived from the 'WP_Replied_track' column. Disclaimer: This feature has been installed now. To check original reply counts, please select the 'Last 3 Months' filter."
+                    info="Derived from the 'WP_Replied_track' column. For older reply counts select the 'Last 3 Months' filter."
                 />
                 <StatCard
-                    title="Response Rate"
-                    value={stats.replyRate}
-                    icon={TrendingUp}
-                    color="text-purple-600"
-                    bg="bg-purple-50"
-                />
-                <StatCard
-                    title="Unique Whatsapp Reachouts"
+                    title="Unique Reachouts"
                     value={stats.totalLeads.toLocaleString()}
                     icon={Users}
                     color="text-slate-600"
                     bg="bg-slate-50"
+                />
+                <StatCard
+                    title="Reply Rate"
+                    value={stats.replyRate}
+                    icon={TrendingUp}
+                    color="text-purple-600"
+                    bg="bg-purple-50"
                 />
             </div>
 
@@ -182,35 +171,6 @@ export default function WhatsappAnalyticsPage() {
                         color="text-amber-600"
                         bg="bg-amber-50"
                     />
-                </div>
-            </div>
-
-            {/* Nurture Analytics Section */}
-            <div className="space-y-4">
-                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <Leaf className="h-4 w-4 text-violet-500" /> Nurture Analytics
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <div className="flex items-center gap-2 mb-2">
-                            <Globe className="h-3.5 w-3.5 text-slate-400" />
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Secondary Nurture</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <StatCard title="Total Sent" value={loading ? "..." : nurtureStats.totalSent.toLocaleString()} icon={Send} color="text-violet-600" bg="bg-violet-50" />
-                            <StatCard title="Replies" value={loading ? "..." : nurtureStats.replied.toLocaleString()} icon={MessageSquare} color="text-emerald-600" bg="bg-emerald-50" />
-                        </div>
-                    </div>
-                    <div>
-                        <div className="flex items-center gap-2 mb-2">
-                            <Flag className="h-3.5 w-3.5 text-slate-400" />
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unknown Nurture</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <StatCard title="Total Sent" value={loading ? "..." : nurtureUkStats.totalSent.toLocaleString()} icon={Send} color="text-teal-600" bg="bg-teal-50" />
-                            <StatCard title="Replies" value={loading ? "..." : nurtureUkStats.replied.toLocaleString()} icon={MessageSquare} color="text-emerald-600" bg="bg-emerald-50" />
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -250,7 +210,7 @@ export default function WhatsappAnalyticsPage() {
                 <Card className="border-slate-200 shadow-sm bg-white">
                     <CardHeader>
                         <CardTitle className="text-sm font-bold text-slate-900">Loop Breakdown</CardTitle>
-                        <CardDescription className="text-xs">Replies distribution by campaign</CardDescription>
+                        <CardDescription className="text-xs">Reachouts distribution by campaign</CardDescription>
                     </CardHeader>
                     <CardContent className="p-3">
                         <div className="h-[240px] w-full">
@@ -262,7 +222,7 @@ export default function WhatsappAnalyticsPage() {
                                     <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
                                     <Bar dataKey="value" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={30}>
                                         {stats.loopData.map((entry: any, index: number) => (
-                                            <Cell key={`cell-${index}`} fill={['#3b82f6', '#10b981', '#8b5cf6'][index % 3]} />
+                                            <Cell key={`cell-${index}`} fill={['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4'][index % 6]} />
                                         ))}
                                     </Bar>
                                 </BarChart>

@@ -5,6 +5,18 @@ import { consolidateLeads, RawLeadsResponse, ConsolidatedLead } from '@/lib/lead
 
 export const dynamic = 'force-dynamic';
 
+// All available tables with display labels
+export const ALL_TABLES = [
+    { key: 'intro',           label: 'Intro' },
+    { key: 'intro_uk',        label: 'Intro UK' },
+    { key: 'follow_up',       label: 'Follow Up' },
+    { key: 'follow_up_uk',    label: 'Follow Up UK' },
+    { key: 'master_leads',    label: 'Master Leads' },
+    { key: 'leads',           label: 'Leads' },
+    { key: 'nurture_leads',   label: 'Nurture' },
+    { key: 'nurture_leads_uk',label: 'Nurture UK' },
+] as const;
+
 function getReachoutDate(lead: any): Date | null {
     const wp1 = lead["W.P_1"];
     if (wp1 && wp1 !== "" && wp1 !== "No") {
@@ -30,6 +42,7 @@ export async function GET(req: Request) {
     const search = searchParams.get('search') || '';
     const replyStatus = searchParams.get('replyStatus') || 'all';
     const loop = searchParams.get('loop') || 'all';
+    const tableFilter = searchParams.get('table') || 'all'; // NEW: filter by specific table
     const page = parseInt(searchParams.get('page') || '1', 10);
     const pageSize = parseInt(searchParams.get('pageSize') || '10', 10);
 
@@ -71,8 +84,15 @@ export async function GET(req: Request) {
             }
         }
 
+        // If the table filter is set (and not 'all'), restrict to that table
+        const tableFilterActive = tableFilter !== 'all' ? tableFilter : null;
+
+        const shouldFetch = (table: string) =>
+            (targetTable === null || targetTable === table) &&
+            (tableFilterActive === null || tableFilterActive === table);
+
         const fetchTable = (table: string, dateCol: string | null) =>
-            (targetTable === null || targetTable === table)
+            shouldFetch(table)
                 ? fetchAllRows(baseUrl, headers, table, dateCol, from, to)
                 : Promise.resolve([]);
 
@@ -92,8 +112,8 @@ export async function GET(req: Request) {
             fetchTable("follow_up_uk", null),
             fetchTable("master_leads", "Last Contacted"),
             fetchTable("leads", "last_outreach_at"),
-            fetchTable("nurture_leads", null),
-            fetchTable("nurture_leads_uk", null),
+            fetchTable("nurture_leads", "week1_wp_1_ts"),
+            fetchTable("nurture_leads_uk", "week1_wp_1_ts"),
         ]);
 
         // Normalise nurture rows into consolidated-lead shape so existing filters work
@@ -220,7 +240,7 @@ export async function GET(req: Request) {
             });
         }
 
-        // Filter: loop
+        // Filter: loop (legacy — kept for backward compat, table filter is the primary way now)
         if (loop !== 'all') {
             consolidatedLeads = consolidatedLeads.filter((l: ConsolidatedLead) => {
                 const sl = l.source_loop?.toLowerCase() || '';

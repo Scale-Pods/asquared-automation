@@ -8,15 +8,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
     Search,
     Filter,
-    Download,
-    UserPlus,
     ChevronLeft,
     ChevronRight,
     MoreVertical,
-    FileSpreadsheet,
-    ArrowUpDown,
-    Calendar,
-    Briefcase,
     RefreshCw,
     Building2,
     Users
@@ -87,6 +81,21 @@ export default function WhatsappLeadsPage() {
     const [dateFrom, setDateFrom] = useState(() => startOfDay(subDays(new Date(), 7)).toISOString());
     const [dateTo, setDateTo] = useState(() => endOfDay(new Date()).toISOString());
 
+    // Table filter — 'all' shows every table; any other value is a specific source table key
+    const [tableFilter, setTableFilter] = useState<string>('all');
+
+    const TABLE_OPTIONS = [
+        { key: 'all',            label: 'All' },
+        { key: 'intro',          label: 'Intro' },
+        { key: 'intro_uk',       label: 'Intro UK' },
+        { key: 'follow_up',      label: 'Follow Up' },
+        { key: 'follow_up_uk',   label: 'Follow Up UK' },
+        { key: 'master_leads',   label: 'Master Leads' },
+        { key: 'leads',          label: 'Leads' },
+        { key: 'nurture_leads',  label: 'Nurture' },
+        { key: 'nurture_leads_uk', label: 'Nurture UK' },
+    ];
+
     const [activeFilters, setActiveFilters] = useState<{
         replyStatus: string[],
         loops: string[]
@@ -142,6 +151,7 @@ export default function WhatsappLeadsPage() {
         if (searchQuery) q.set('search', searchQuery);
         q.set('replyStatus', replyStatusToApi(activeFilters.replyStatus));
         q.set('loop', loopsToApi(activeFilters.loops));
+        if (tableFilter !== 'all') q.set('table', tableFilter);
         q.set('page', String(currentPage));
         q.set('pageSize', String(leadsPerPage));
 
@@ -168,6 +178,7 @@ export default function WhatsappLeadsPage() {
         searchQuery,
         activeFilters.replyStatus.join(','),
         activeFilters.loops.join(','),
+        tableFilter,
         currentPage
     ]);
 
@@ -190,6 +201,7 @@ export default function WhatsappLeadsPage() {
 
     const resetFilters = () => {
         setActiveFilters({ replyStatus: [], loops: [] });
+        setTableFilter('all');
         setDateFrom(startOfDay(subDays(new Date(), 7)).toISOString());
         setDateTo(endOfDay(new Date()).toISOString());
         setSearchQuery("");
@@ -273,7 +285,7 @@ export default function WhatsappLeadsPage() {
                         </button>
                     </div>
 
-                    {(activeFilters.replyStatus.length > 0 || activeFilters.loops.length > 0 || searchQuery) && (
+                    {(activeFilters.replyStatus.length > 0 || activeFilters.loops.length > 0 || searchQuery || tableFilter !== 'all') && (
                         <Button
                             variant="ghost"
                             size="sm"
@@ -291,58 +303,58 @@ export default function WhatsappLeadsPage() {
                 </div>
             </div>
 
-            {/* Search & Simple Filter Bar */}
-            <div className="flex flex-col md:flex-row items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                <div className="relative flex-1 w-full">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input
-                        className="pl-10 h-10 bg-slate-50/50 border-slate-200"
-                        placeholder={`Search ${activeTab}...`}
-                        value={searchQuery}
-                        onChange={handleSearchChange}
-                    />
+            {/* Search & Filter Bar */}
+            <div className="space-y-3">
+                {/* Table filter pills — server-side, no heavy logic */}
+                <div className="flex flex-wrap gap-2">
+                    {TABLE_OPTIONS.map(opt => (
+                        <button
+                            key={opt.key}
+                            onClick={() => { setTableFilter(opt.key); setCurrentPage(1); }}
+                            className={`px-3 py-1 rounded-full text-xs font-bold border transition-all ${
+                                tableFilter === opt.key
+                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-400 hover:text-emerald-600'
+                            }`}
+                        >
+                            {opt.label}
+                        </button>
+                    ))}
                 </div>
-                <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="outline" className={`gap-2 h-10 border-slate-200 ${activeFilters.replyStatus.length > 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : ''}`}>
-                                <Filter className="h-4 w-4" />
-                                {activeFilters.replyStatus.length > 0 ? `Status (${activeFilters.replyStatus.length})` : 'Status'}
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48">
-                            <DropdownMenuItem onClick={() => toggleFilter('replyStatus', 'Replied')} className="flex items-center justify-between">
-                                Replied {activeFilters.replyStatus.includes('Replied') && "✓"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => toggleFilter('replyStatus', 'Sent')} className="flex items-center justify-between">
-                                Sent {activeFilters.replyStatus.includes('Sent') && "✓"}
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
 
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="outline" className={`gap-2 h-10 border-slate-200 ${activeFilters.loops.length > 0 ? 'bg-purple-50 border-purple-200 text-purple-700' : ''}`}>
-                                <Briefcase className="h-4 w-4" />
-                                {activeFilters.loops.length > 0 ? `Loops (${activeFilters.loops.length})` : 'Loops'}
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48">
-                            <DropdownMenuItem onClick={() => toggleFilter('loops', 'Intro')} className="flex items-center justify-between">
-                                Intro {activeFilters.loops.includes('Intro') && "✓"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => toggleFilter('loops', 'followup')} className="flex items-center justify-between">
-                                Follow Up {activeFilters.loops.includes('followup') && "✓"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => toggleFilter('loops', 'nurture')} className="flex items-center justify-between">
-                                Nurture {activeFilters.loops.includes('nurture') && "✓"}
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                {/* Search + status/reply filters */}
+                <div className="flex flex-col md:flex-row items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="relative flex-1 w-full">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <Input
+                            className="pl-10 h-10 bg-slate-50/50 border-slate-200"
+                            placeholder={`Search ${activeTab}...`}
+                            value={searchQuery}
+                            onChange={handleSearchChange}
+                        />
+                    </div>
+                    <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" className={`gap-2 h-10 border-slate-200 ${activeFilters.replyStatus.length > 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : ''}`}>
+                                    <Filter className="h-4 w-4" />
+                                    {activeFilters.replyStatus.length > 0 ? `Status (${activeFilters.replyStatus.length})` : 'Status'}
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem onClick={() => toggleFilter('replyStatus', 'Replied')} className="flex items-center justify-between">
+                                    Replied {activeFilters.replyStatus.includes('Replied') && "✓"}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => toggleFilter('replyStatus', 'Sent')} className="flex items-center justify-between">
+                                    Sent {activeFilters.replyStatus.includes('Sent') && "✓"}
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
 
-                    <Button variant="outline" className="gap-2 h-10 border-slate-200" onClick={() => window.location.reload()}>
-                        <RefreshCw className="h-4 w-4" /> Refresh
-                    </Button>
+                        <Button variant="outline" className="gap-2 h-10 border-slate-200" onClick={() => window.location.reload()}>
+                            <RefreshCw className="h-4 w-4" /> Refresh
+                        </Button>
+                    </div>
                 </div>
             </div>
 

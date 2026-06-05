@@ -147,43 +147,98 @@ export async function GET(req: Request) {
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads", null, from, to),
-            fetchAllRows(baseUrl, headers, "nurture_leads_uk", null, from, to),
+            // nurture uses week1_wp_1_ts (timestamptz) for DB-level date filter
+            fetchAllRows(baseUrl, headers, "nurture_leads", "week1_wp_1_ts", from, to),
+            fetchAllRows(baseUrl, headers, "nurture_leads_uk", "week1_wp_1_ts", from, to),
         ]);
 
-        // Compute nurture stats separately (different schema: week1_wp_1..week3_wp_4, wp_replied_track)
+
+        // Nurture schema: week1_wp_1..week3_wp_4 (text), week1_wp_1_ts..week3_wp_4_ts (timestamptz)
+        // wp_replied_track (text) for replies
         const NURTURE_WP_COLS = [
             'week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
             'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
             'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4',
         ];
+        const NURTURE_WP_TS_COLS = [
+            'week1_wp_1_ts','week1_wp_2_ts','week1_wp_3_ts','week1_wp_4_ts',
+            'week2_wp_1_ts','week2_wp_2_ts','week2_wp_3_ts','week2_wp_4_ts',
+            'week3_wp_1_ts','week3_wp_2_ts','week3_wp_3_ts','week3_wp_4_ts',
+        ];
 
-        const getNurtureReachoutDate = (l: any): Date | null => {
-            const ts = l.wp_last_contacted || l.last_contacted;
-            if (ts) { const d = new Date(ts); if (!isNaN(d.getTime())) return d; }
+        // Returns the earliest (first contact) date for a nurture row.
+        // Uses week1_wp_1_ts first (proper timestamptz), then falls back through other TS cols,
+        // then wp_last_contacted/last_contacted, then created_at if any wp col is non-empty.
+        const getNurtureFirstContactDate = (l: any): Date | null => {
+            // Prefer week1_wp_1_ts as the canonical "first reachout" date
+            const firstTs = l['week1_wp_1_ts'];
+            if (firstTs) {
+                const d = new Date(firstTs);
+                if (!isNaN(d.getTime())) return d;
+            }
+            // Try any other TS column in order
+            for (const tsCol of NURTURE_WP_TS_COLS) {
+                const ts = l[tsCol];
+                if (ts) { const d = new Date(ts); if (!isNaN(d.getTime())) return d; }
+            }
+            // Legacy fallback: wp_last_contacted / last_contacted
+            const legacyTs = l.wp_last_contacted || l.last_contacted;
+            if (legacyTs) { const d = new Date(legacyTs); if (!isNaN(d.getTime())) return d; }
+            // Last resort: row has content but no timestamp — use created_at
             for (const col of NURTURE_WP_COLS) {
-                if (l[col] && String(l[col]).trim() !== '') return new Date(l.created_at || 0);
+                if (l[col] && String(l[col]).trim() !== '') {
+                    const d = new Date(l.created_at || 0);
+                    return isNaN(d.getTime()) ? null : d;
+                }
             }
             return null;
+        };
+
+        // Count messages sent for a nurture row — only counts cols whose TS falls in range
+        // (or where TS is missing but the content col is non-empty and the row is in range)
+        const countNurtureMsgsInRange = (l: any): number => {
+            let count = 0;
+            NURTURE_WP_COLS.forEach((col, idx) => {
+                if (!l[col] || String(l[col]).trim() === '') return;
+                const tsCol = NURTURE_WP_TS_COLS[idx];
+                const ts = l[tsCol];
+                if (ts) {
+                    const d = new Date(ts);
+                    if (!isNaN(d.getTime()) && isInRange(d)) count++;
+                } else {
+                    // No individual TS — include if the row's first contact is in range
+                    count++;
+                }
+            });
+            return count;
         };
 
         let nurtureMsgsSent = 0, nurtureReplies = 0, nurtureLeadsContacted = 0;
         let nurtureUkMsgsSent = 0, nurtureUkReplies = 0, nurtureUkLeadsContacted = 0;
 
         [...nurtureRows].forEach((l: any) => {
-            const rd = getNurtureReachoutDate(l);
+            // A row counts as a reachout only if week1_wp_1 (or any first-msg col) is not null
+            // AND its date falls within the selected range.
+            const hasFirstContact = !!(l['week1_wp_1'] && String(l['week1_wp_1']).trim() !== '');
+            if (!hasFirstContact) return;
+            const rd = getNurtureFirstContactDate(l);
             if (!rd || !isInRange(rd)) return;
             nurtureLeadsContacted++;
-            NURTURE_WP_COLS.forEach(col => { if (l[col] && String(l[col]).trim() !== '') nurtureMsgsSent++; });
-            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureReplies++;
+            nurtureMsgsSent += countNurtureMsgsInRange(l);
+            // Reply: wp_replied_track not null/empty/"no"
+            const rTrack = l.wp_replied_track;
+            if (rTrack && String(rTrack).trim() !== '' && String(rTrack).toLowerCase() !== 'no') nurtureReplies++;
         });
 
         [...nurtureUkRows].forEach((l: any) => {
-            const rd = getNurtureReachoutDate(l);
+            const hasFirstContact = !!(l['week1_wp_1'] && String(l['week1_wp_1']).trim() !== '');
+            if (!hasFirstContact) return;
+            const rd = getNurtureFirstContactDate(l);
             if (!rd || !isInRange(rd)) return;
             nurtureUkLeadsContacted++;
-            NURTURE_WP_COLS.forEach(col => { if (l[col] && String(l[col]).trim() !== '') nurtureUkMsgsSent++; });
-            if (l.wp_replied_track && String(l.wp_replied_track).trim() !== '') nurtureUkReplies++;
+            nurtureUkMsgsSent += countNurtureMsgsInRange(l);
+            const rTrack = l.wp_replied_track;
+            if (rTrack && String(rTrack).trim() !== '' && String(rTrack).toLowerCase() !== 'no') nurtureUkReplies++;
         });
 
         // Consolidate intro/follow_up rows to normalize field names (space→underscore, TS mappings, etc.)
@@ -198,7 +253,15 @@ export async function GET(req: Request) {
         // Combine consolidated normal leads with leads table (raw rows use last_outreach_at)
         const allLeads = [...consolidatedNormalLeads, ...leadsRows];
 
+        // A lead counts as a reachout only when W.P_1 is not null/empty (or W.P_1 TS has a parseable date)
+        // AND that date falls within the selected range.
         const filteredLeads = allLeads.filter((lead: any) => {
+            const wp1 = lead["W.P_1"];
+            const wp1Ts = lead["W.P_1 TS"];
+            // Must have at least W.P_1 content or W.P_1 TS
+            const hasFirstMsg = (wp1 && String(wp1).trim() !== '' && String(wp1).trim().toLowerCase() !== 'no')
+                             || (wp1Ts && String(wp1Ts).trim() !== '');
+            if (!hasFirstMsg) return false;
             const rd = getReachoutDate(lead);
             if (!rd) return false;
             return isInRange(rd);
@@ -218,6 +281,7 @@ export async function GET(req: Request) {
 
         filteredLeads.forEach((lead: any) => {
             const tKey: string = lead.source_table || 'unknown';
+            // Count reachout: W.P_1 not null is our definition (already filtered above)
             tableReachouts[tKey] = (tableReachouts[tKey] || 0) + 1;
 
             let leadSentCount = 0;
@@ -254,27 +318,33 @@ export async function GET(req: Request) {
                 tableMsgsSent[tKey] = (tableMsgsSent[tKey] || 0) + leadSentCount;
             }
 
-            // Reply detection: check WP_Replied_track, then W.P_Replied_1..10
+            // Reply detection:
+            // 1. WP_Replied_track (intro/follow_up consolidated — mapped from wp_replied_track)
+            // 2. W.P_Replied_1..10 (older intro/follow_up schema)
+            // A reply counts only if the lead itself is in the filtered set (already guaranteed above)
             const replyVal = lead["WP_Replied_track"];
             let isRepliedInRange = false;
 
             if (replyVal && replyVal !== "" && String(replyVal).toLowerCase() !== "no") {
                 const parsed = parseMsg(replyVal);
                 if (parsed.date) {
+                    // Reply has an embedded date — check if it's in range
                     if (isInRange(parsed.date)) isRepliedInRange = true;
-                } else if (String(replyVal).toLowerCase() === "yes" || String(replyVal).toLowerCase() === "replied") {
-                    if (isInRange(new Date(lead.created_at))) isRepliedInRange = true;
+                } else {
+                    // "yes" / "replied" — no date, count it (lead is already in range)
+                    isRepliedInRange = true;
                 }
             }
 
-            // Fallback: W.P_Replied_1..10 for intro/follow_up consolidated leads
+            // Fallback: W.P_Replied_1..10 (intro/follow_up after consolidation)
             if (!isRepliedInRange) {
                 for (let i = 1; i <= 10; i++) {
                     const rVal = lead[`W.P_Replied_${i}`];
                     if (rVal && String(rVal).trim() !== '' && String(rVal).toLowerCase() !== 'no') {
                         const parsed = parseMsg(rVal);
-                        const replyDate = parsed.date || new Date(lead.created_at);
-                        if (isInRange(replyDate)) { isRepliedInRange = true; break; }
+                        const replyDate = parsed.date;
+                        // If there's a parseable date, check range; otherwise count it (lead is in range)
+                        if (!replyDate || isInRange(replyDate)) { isRepliedInRange = true; break; }
                     }
                 }
             }

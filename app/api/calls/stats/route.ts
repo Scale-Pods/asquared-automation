@@ -3,9 +3,7 @@ import { format } from 'date-fns';
 
 export const dynamic = 'force-dynamic';
 
-const SEC_ASSISTANT = 'c552e5b3-6c41-41d2-83b4-7c820e0d14bb';
-const UNKNOWN_ASSISTANT = '3266ea3f-336e-436a-bd2a-63f196aab37f';
-const OWNERS_ASSISTANT = '682cf6ae-23fd-44f3-a4a3-756998cd62c1';
+
 
 async function fetchTable(baseUrl: string, headers: Record<string, string>, table: string, columns: string, dateFilter: string, BATCH_SIZE = 1000) {
     try {
@@ -66,12 +64,11 @@ export async function GET(req: Request) {
     }
 
     const normalizeRow = (d: any) => {
-        const aid = d.assistantId || '';
-        let account: string;
-        if (aid === SEC_ASSISTANT) account = 'secondary';
-        else if (aid === UNKNOWN_ASSISTANT) account = 'unknown';
-        else if (aid === OWNERS_ASSISTANT) account = 'owners';
-        else account = 'normal';
+        const acct = String(d.vapi_account || '').toLowerCase();
+        let account = 'normal';
+        if (acct === 'secondary') account = 'secondary';
+        else if (acct === 'unknown') account = 'unknown';
+        else if (acct === 'owner' || acct === 'owners') account = 'owners';
 
         return {
             id: d.id,
@@ -100,7 +97,10 @@ export async function GET(req: Request) {
             (row.voice_call_status || '').trim().toLowerCase() === 'awaiting availability';
 
         const ownerWaitingCount = ownerRows.filter(
-            (r: any) => r.assistantId === OWNERS_ASSISTANT && isAwaiting(r)
+            (r: any) => {
+                const acct = String(r.vapi_account || '').toLowerCase();
+                return (acct === 'owner' || acct === 'owners') && isAwaiting(r);
+            }
         ).length;
 
         // Secondary sentiment: call_sentiment1/2/3

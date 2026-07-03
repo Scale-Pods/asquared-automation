@@ -57,10 +57,11 @@ export async function GET() {
 
         allRows.forEach((row: any) => {
             const cost = parseFloat(row.cost_usd) || 0;
+            const acct = String(row.vapi_account || '').toLowerCase();
             totalAgentCost += cost;
-            if (row.vapi_account === 'secondary') secondaryAgentCost += cost;
-            else if (row.vapi_account === 'unknown') unknownAgentCost += cost;
-            else if (row.vapi_account === 'owners') ownerAgentCost += cost;
+            if (acct === 'secondary') secondaryAgentCost += cost;
+            else if (acct === 'unknown') unknownAgentCost += cost;
+            else if (acct === 'owner' || acct === 'owners') ownerAgentCost += cost;
         });
 
         return NextResponse.json({ totalAgentCost, secondaryAgentCost, unknownAgentCost, ownerAgentCost });

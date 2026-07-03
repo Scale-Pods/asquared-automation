@@ -3,9 +3,7 @@ import { fetchAllRows } from '@/lib/server-parsers';
 
 export const dynamic = 'force-dynamic';
 
-const SEC_ASSISTANT = 'c552e5b3-6c41-41d2-83b4-7c820e0d14bb';
-const UNKNOWN_ASSISTANT = '3266ea3f-336e-436a-bd2a-63f196aab37f';
-const OWNERS_ASSISTANT = '682cf6ae-23fd-44f3-a4a3-756998cd62c1';
+
 
 async function fetchTable(baseUrl: string, headers: Record<string, string>, table: string, columns: string, dateFilter: string, BATCH_SIZE = 1000) {
     try {
@@ -146,11 +144,11 @@ export async function GET(req: Request) {
                 customerName = leadInfo.name;
             }
 
-            let account: string;
-            if ((aid || '') === SEC_ASSISTANT) account = 'secondary';
-            else if ((aid || '') === UNKNOWN_ASSISTANT) account = 'unknown';
-            else if ((aid || '') === OWNERS_ASSISTANT) account = 'owners';
-            else account = 'normal';
+            const acct = String(d.vapi_account || '').toLowerCase();
+            let account = 'normal';
+            if (acct === 'secondary') account = 'secondary';
+            else if (acct === 'unknown') account = 'unknown';
+            else if (acct === 'owner' || acct === 'owners') account = 'owners';
 
             return {
                 id: d.id,

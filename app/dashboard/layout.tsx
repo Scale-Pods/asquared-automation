@@ -106,19 +106,10 @@ function DashboardContent({
             icon: LayoutDashboard,
             items: [
                 { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-                { title: "Email Marketing", href: "/dashboard/email", icon: Mail },
                 { title: "WhatsApp CRM", href: "/dashboard/whatsapp", icon: MessageCircle },
                 { title: "Voice Agent", href: "/dashboard/voice", icon: Mic },
                 { title: "Leads", href: "/dashboard/leads", icon: Users },
                 { title: "Credentials", href: "/dashboard/credentials", icon: Key },
-            ]
-        },
-        email: {
-            label: "Email Marketing",
-            icon: Mail,
-            items: [
-                { title: "Overview", href: "/dashboard/email", icon: LayoutDashboard },
-                { title: "Analytics", href: "/dashboard/email/analytics", icon: BarChart2 },
             ]
         },
         whatsapp: {
@@ -141,8 +132,7 @@ function DashboardContent({
     };
 
     let currentContext = "master";
-    if (pathname.startsWith("/dashboard/email")) currentContext = "email";
-    else if (pathname.startsWith("/dashboard/whatsapp")) currentContext = "whatsapp";
+    if (pathname.startsWith("/dashboard/whatsapp")) currentContext = "whatsapp";
     else if (pathname.startsWith("/dashboard/voice")) currentContext = "voice";
 
     const activeConfig = (dashboardConfig as any)[currentContext];
@@ -183,7 +173,7 @@ function DashboardContent({
 
 
     const content = (() => {
-        if (pathname.startsWith("/dashboard/email") || pathname.startsWith("/dashboard/whatsapp") || pathname.startsWith("/dashboard/voice")) {
+        if (pathname.startsWith("/dashboard/whatsapp") || pathname.startsWith("/dashboard/voice")) {
             return <>{children}</>;
         }
 
@@ -222,9 +212,6 @@ function DashboardContent({
                             <DropdownMenuContent align="start" className="w-[220px] bg-zinc-900 border-zinc-800 text-zinc-300">
                                 <DropdownMenuItem onClick={() => router.push("/dashboard")} className="hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white">
                                     <LayoutDashboard className="mr-2 h-4 w-4" /> Master Overview
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => router.push("/dashboard/email")} className="hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white">
-                                    <Mail className="mr-2 h-4 w-4" /> Email Marketing
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => router.push("/dashboard/whatsapp")} className="hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white">
                                     <MessageCircle className="mr-2 h-4 w-4" /> WhatsApp CRM

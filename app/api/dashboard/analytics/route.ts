@@ -148,25 +148,8 @@ export async function GET(req: Request) {
             ? `Since ${leadsRows.reduce((min: Date, l: any) => { const d = new Date(l.created_at); return d < min ? d : min; }, new Date(leadsRows[0].created_at)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
             : "Real-time";
 
-        // --- Total Emails Sent (from intro/follow_up contact rows) ---
-        let emailCount = 0;
-        const emailDates: Date[] = [];
-        normalContactRows.forEach((lead: any) => {
-            const stages = lead.stages_passed || [];
-            const stageData = lead.stage_data || {};
-            stages.forEach((stage: string) => {
-                if (stage.toLowerCase().trim().startsWith("email_")) {
-                    const d = parseMsg(stageData[stage]).date || new Date(lead.updated_at || lead.created_at);
-                    if (isWithinRange(d, fromDate, toDate)) {
-                        emailCount++;
-                        emailDates.push(d);
-                    }
-                }
-            });
-        });
-        const oldestEmailDate = emailDates.length > 0
-            ? `Since ${emailDates.reduce((min, d) => d < min ? d : min).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
-            : "Real-time";
+        const emailCount = 0;
+        const oldestEmailDate = "Real-time";
 
         // Parses nurture TS strings like "READ at Jun 02 2026, 08:05 PM"
         const parseNurtureTS = (raw: any): Date | null => {
@@ -311,9 +294,6 @@ export async function GET(req: Request) {
         });
 
         // --- Voice Calls ---
-        const SEC_ASSISTANT = 'c552e5b3-6c41-41d2-83b4-7c820e0d14bb';
-        const UNKNOWN_ASSISTANT = '3266ea3f-336e-436a-bd2a-63f196aab37f';
-        const OWNERS_ASSISTANT = '682cf6ae-23fd-44f3-a4a3-756998cd62c1';
         let totalVoiceCalls = 0;
         let secondaryVoiceCalls = 0;
         let unknownVoiceCalls = 0;
@@ -324,10 +304,11 @@ export async function GET(req: Request) {
         let ownerVoiceSeconds = 0;
         allCalls.forEach((call: any) => {
             if (!isWithinRange(new Date(call.created_at || 0), fromDate, toDate)) return;
-            const aid = call.assistantId || '';
-            const isSecondary = aid === SEC_ASSISTANT;
-            const isUnknown = aid === UNKNOWN_ASSISTANT;
-            const isOwner = aid === OWNERS_ASSISTANT;
+            const acct = String(call.vapi_account || '').toLowerCase();
+            const isSecondary = acct === 'secondary';
+            const isUnknown = acct === 'unknown';
+            const isOwner = acct === 'owner' || acct === 'owners';
+            
             if (isSecondary) {
                 secondaryVoiceCalls++;
                 secondaryVoiceSeconds += calculateDuration(call);

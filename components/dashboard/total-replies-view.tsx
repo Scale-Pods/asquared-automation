@@ -26,7 +26,7 @@ export interface ReplyData {
     id: string;
     contactName: string;
     contactInfo: string;
-    mode: 'Email' | 'WhatsApp' | 'Voice';
+    mode: 'WhatsApp' | 'Voice';
     date: string;
     time: string;
     status: 'Replied' | 'Pending' | 'Follow-up';
@@ -106,27 +106,7 @@ export function TotalRepliesView({ leads = [], replyData }: { leads?: any[]; rep
             });
         }
 
-        // --- Email Logic ---
-        const hasEmail = lead.email_replied && !["no", "none", ""].includes(String(lead.email_replied).toLowerCase().trim());
 
-        if (hasEmail) {
-            const parsed = parseMsg(lead.email_replied);
-            const msgDate = parsed.date || new Date(lead.updated_at || lead.created_at || 0);
-            const emailReplyObj = { content: parsed.content || "Lead replied via Email", date: msgDate };
-
-            realData.push({
-                id: `${lead.id || `lead-${idx}`}-email`,
-                contactName: lead.name || "Unknown",
-                contactInfo: lead.email || "No info",
-                mode: 'Email',
-                date: emailReplyObj.date.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }),
-                time: emailReplyObj.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                status: 'Replied',
-                preview: emailReplyObj.content.substring(0, 70) + (emailReplyObj.content.length > 70 ? "..." : ""),
-                link: `/dashboard/email/received`,
-                sortDate: emailReplyObj.date
-            });
-        }
     });
 
     // Sort heavily by newest reply first
@@ -165,7 +145,7 @@ export function TotalRepliesView({ leads = [], replyData }: { leads?: any[]; rep
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem value="all">All Modes</SelectItem>
-                            <SelectItem value="email">Email</SelectItem>
+
                             <SelectItem value="whatsapp">WhatsApp</SelectItem>
                         </SelectContent>
                     </Select>
@@ -195,7 +175,7 @@ export function TotalRepliesView({ leads = [], replyData }: { leads?: any[]; rep
                                     </TableCell>
                                     <TableCell>
                                         <div className="flex items-center gap-2">
-                                            {item.mode === 'Email' && <Mail className="h-4 w-4 text-sky-500" />}
+
                                             {item.mode === 'WhatsApp' && <MessageCircle className="h-4 w-4 text-green-500" />}
                                             {item.mode === 'Voice' && <Phone className="h-4 w-4 text-purple-500" />}
                                             <span>{item.mode}</span>

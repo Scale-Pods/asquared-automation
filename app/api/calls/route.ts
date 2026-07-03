@@ -3,9 +3,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 import crypto from 'crypto';
 
-const SEC_ASSISTANT = 'c552e5b3-6c41-41d2-83b4-7c820e0d14bb';
-const UNKNOWN_ASSISTANT = '3266ea3f-336e-436a-bd2a-63f196aab37f';
-const OWNERS_ASSISTANT = '682cf6ae-23fd-44f3-a4a3-756998cd62c1';
+
 
 // --- Helper: Timeout Signal ---
 function getTimeoutSignal(ms: number) {
@@ -131,11 +129,11 @@ async function fetchAllCallLogs(fromDate: Date | null, toDate: Date | null): Pro
 
         const assistantPhone = (aid ? assistantIdToPhone[aid] : null) || 'Unknown';
 
-        let account: string;
-        if (aid === SEC_ASSISTANT) account = 'secondary';
-        else if (aid === UNKNOWN_ASSISTANT) account = 'unknown';
-        else if (aid === OWNERS_ASSISTANT) account = 'owners';
-        else account = 'normal';
+        const acct = String(d.vapi_account || '').toLowerCase();
+        let account = 'normal';
+        if (acct === 'secondary') account = 'secondary';
+        else if (acct === 'unknown') account = 'unknown';
+        else if (acct === 'owner' || acct === 'owners') account = 'owners';
 
         return {
             id: d.id,

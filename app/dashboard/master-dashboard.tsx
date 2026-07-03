@@ -38,7 +38,6 @@ import { fetchCached } from "@/lib/use-cached-fetch";
 
 interface AnalyticsResponse {
     normalLeadsCount: number;
-    emailCount: number;
     whatsappReachouts: number;
     wpSubtitle?: string;
     totalVoiceCalls: number;
@@ -55,7 +54,6 @@ interface AnalyticsResponse {
     ownerWhatsappReachouts: number;
     ownerTotalReplies: number;
     oldestLeadDate: string;
-    oldestEmailDate: string;
     oldestWPDate: string;
     ownerLeadsSince: string;
     ownerWhatsappSince: string;
@@ -140,7 +138,6 @@ export default function MasterDashboard() {
         : (s?.voiceMinutesString ?? "...");
 
     const realServiceDistribution = [
-        { name: 'Email', value: s?.emailCount || 0, color: '#3b82f6' },
         { name: 'WhatsApp', value: s?.whatsappReachouts || 0, color: '#10b981' },
         { name: 'Voice', value: s?.totalVoiceCalls || 0, color: '#8b5cf6' },
     ];

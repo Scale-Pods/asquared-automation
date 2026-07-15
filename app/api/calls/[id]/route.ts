@@ -184,6 +184,7 @@ export async function GET(
                     const finalData: any = {
                         ...raw,
                         id: row.id,
+                        name: resolveName(row.customer_name || raw.customer?.name || raw.name, row.customer_phone),
                         transcript: row.transcript || raw.transcript || [],
                         analysis: { ...raw.analysis, summary: row.summary },
                         callSummary: row.summary,

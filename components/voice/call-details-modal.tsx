@@ -265,7 +265,9 @@ export function CallDetailsModal({ open, onOpenChange, call }: CallDetailsModalP
                     {displayCall?.id && (
                         <button
                             onClick={() => {
-                                const url = `${window.location.origin}/call/${displayCall.id}`;
+                                const rawPhone = guestNumber && guestNumber !== "Unknown" ? guestNumber : displayCall.id;
+                                const digitsOnly = rawPhone.replace(/\D/g, '');
+                                const url = `${window.location.origin}/call/${digitsOnly || displayCall.id}`;
                                 navigator.clipboard.writeText(url).then(() => {
                                     setLinkCopied(true);
                                     setTimeout(() => setLinkCopied(false), 2000);

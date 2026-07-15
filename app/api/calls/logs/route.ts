@@ -188,9 +188,9 @@ export async function GET(req: Request) {
             calls = calls.filter(c => {
                 const vcs = (c.voiceCallStatus || '').toLowerCase();
                 if (target === 'did not answer') {
-                    return vcs === 'no answer' || vcs === 'did_not_answer' || vcs === 'no_answer';
+                    return vcs === 'no answer' || vcs === 'did_not_answer' || vcs === 'no_answer' || vcs.startsWith('did not answer');
                 }
-                return vcs === target;
+                return vcs === target || vcs.startsWith(target);
             });
         }
 

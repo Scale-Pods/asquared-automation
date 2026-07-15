@@ -24,6 +24,7 @@ export async function GET(
         const ownerKey  = process.env.VAPI_PRIVATE_KEY;
         const normalKey = process.env.VAPI_NORMAL_LEADS_PRIVATE_KEY;
         const { id } = await context.params;
+        const isPhoneLookup = /^\d{6,15}$/.test(id);
 
         const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
         const secretKey   = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -115,13 +116,15 @@ export async function GET(
         let vapiData: any = null;
         let usedKey: string | undefined;
 
-        if (ownerKey) {
-            vapiData = await tryVapiFetch(id, ownerKey);
-            if (vapiData) usedKey = ownerKey;
-        }
-        if (!vapiData && normalKey) {
-            vapiData = await tryVapiFetch(id, normalKey);
-            if (vapiData) usedKey = normalKey;
+        if (!isPhoneLookup) {
+            if (ownerKey) {
+                vapiData = await tryVapiFetch(id, ownerKey);
+                if (vapiData) usedKey = ownerKey;
+            }
+            if (!vapiData && normalKey) {
+                vapiData = await tryVapiFetch(id, normalKey);
+                if (vapiData) usedKey = normalKey;
+            }
         }
 
         if (vapiData) {
@@ -165,7 +168,10 @@ export async function GET(
                 // Check NF table first (more calls), then owner table
                 let row: any = null;
                 for (const table of ['vapi_call_logs_nf', 'vapi_call_logs']) {
-                    const res = await fetch(`${base}/${table}?id=eq.${id}&select=*`, { headers: h });
+                    const query = isPhoneLookup
+                        ? `customer_phone=ilike.*${id}&order=created_at.desc&limit=1`
+                        : `id=eq.${id}`;
+                    const res = await fetch(`${base}/${table}?${query}&select=*`, { headers: h });
                     if (res.ok) {
                         const data = await res.json();
                         if (data?.[0]) { row = data[0]; break; }

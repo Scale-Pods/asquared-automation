@@ -407,14 +407,24 @@ function VoiceLogsContent() {
 
 
 
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                        <SelectTrigger className="w-[160px] h-9"><SelectValue placeholder="Status" /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All Status</SelectItem>
+                            <SelectItem value="answered">Answered</SelectItem>
+                            <SelectItem value="no-answer">No Answer</SelectItem>
+                            <SelectItem value="busy">Busy</SelectItem>
+                            <SelectItem value="failed">Failed</SelectItem>
+                        </SelectContent>
+                    </Select>
+
                     <Select value={voiceStatusFilter} onValueChange={setVoiceStatusFilter}>
                         <SelectTrigger className="w-[180px] h-9"><SelectValue placeholder="Voice Status" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="all">All Voice Status</SelectItem>
                             <SelectItem value="did not answer">Did Not Answer</SelectItem>
                             <SelectItem value="Contacted">Contacted</SelectItem>
-
-                            <SelectItem value="Awaiting availability">Awaiting availability</SelectItem>
+                            <SelectItem value="Awaiting Availability">Awaiting Availability</SelectItem>
                         </SelectContent>
                     </Select>
 

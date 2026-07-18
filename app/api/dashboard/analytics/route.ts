@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay, subDays } from 'date-fns';
 import { processReplyLeads, fetchAllRows } from '@/lib/server-parsers';
+import { computeOwnerMetrics, OWNER_LIST_COLUMNS } from '@/lib/master-leads-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -105,7 +106,11 @@ export async function GET(req: Request) {
             nurtureLeadsUkRows,
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "created_at", from, to),
-            fetchAllRows(baseUrl, headers, "master_leads", "created_at", from, to),
+            // whatsapp_last_contacted is TEXT, so master_leads is date-filtered in-memory (via computeOwnerMetrics) — not server-side.
+            // Narrow select= to only the columns metrics need (master_leads has 60+ columns
+            // including 10 rounds of free-text replies/follow-ups — select=* was the main
+            // cause of slow owners data loads).
+            fetchAllRows(baseUrl, headers, "master_leads", null, null, null, undefined, OWNER_LIST_COLUMNS),
             fetchAllRows(baseUrl, headers, "intro", null, from, to),
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
@@ -323,32 +328,22 @@ export async function GET(req: Request) {
             }
             totalVoiceSeconds += calculateDuration(call);
         });
-        // --- Owner Stats (master_leads already server-filtered by created_at) ---
-        let totalOwnerLeads = masterLeads.length;
-        let ownerWhatsappReachouts = 0;
-        let ownerTotalReplies = 0;
+        // --- Owner Stats (master_leads, scoped to WhatsApp-eligible rows via whatsapp_last_contacted) ---
+        const ownerMetrics = computeOwnerMetrics(masterLeads, fromDate, toDate);
+        const totalOwnerLeads = ownerMetrics.totalOwners;
+        const ownerWhatsappReachouts = ownerMetrics.reachouts;
+        const ownerTotalReplies = ownerMetrics.replies;
+
         let minOwnerWPDate: Date | null = null;
-        let minOwnerLeadDate: Date | null = null;
         masterLeads.forEach((o: any) => {
-            const createdAt = new Date(o.created_at || 0);
-            if (!minOwnerLeadDate || createdAt < minOwnerLeadDate) minOwnerLeadDate = createdAt;
-            const wp1 = o["Whatsapp 1"] || o["Whatsapp_1"];
-            const wp2 = o["Whatsapp 2"] || o["Whatsapp_2"];
-            const wp1Date = parseMsg(wp1).date;
-            const wp2Date = parseMsg(wp2).date;
-            if (wp1Date || wp2Date) {
-                ownerWhatsappReachouts++;
-                const d = wp1Date || wp2Date;
-                if (d && (!minOwnerWPDate || d < minOwnerWPDate)) minOwnerWPDate = d;
-            }
-            if (o.Replied && (String(o.Replied).toLowerCase() === 'yes' || String(o.Replied).toLowerCase() === 'replied')) {
-                ownerTotalReplies++;
-            }
+            if (!o["Whatsapp_1"]) return;
+            const d = o["whatsapp_last_contacted"] ? new Date(o["whatsapp_last_contacted"]) : null;
+            if (d && !isNaN(d.getTime()) && (!minOwnerWPDate || d < minOwnerWPDate)) minOwnerWPDate = d;
         });
         const formatLabel = (d: Date | null) => d ? `Since ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : "Real-time";
-        const ownerLeadsSince = formatLabel(minOwnerLeadDate);
+        const ownerLeadsSince = formatLabel(minOwnerWPDate);
         const ownerWhatsappSince = formatLabel(minOwnerWPDate);
-        const ownerRepliesSince = ownerTotalReplies > 0 ? "Real-time" : "Real-time";
+        const ownerRepliesSince = "Real-time";
 
         const voiceMinutesString = formatDuration(totalVoiceSeconds);
         const secondaryVoiceDurationString = formatDuration(secondaryVoiceSeconds);

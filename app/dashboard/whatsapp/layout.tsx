@@ -39,7 +39,6 @@ const whatsappSidebarItems = [
         href: "/dashboard/whatsapp/leads",
         icon: Users,
     },
-
     {
         title: "Analytics",
         href: "/dashboard/whatsapp/analytics",
@@ -128,7 +127,9 @@ export default function WhatsappLayout({
 
                 <nav className="flex-1 overflow-auto px-4 space-y-2">
                     {whatsappSidebarItems.map((item, index) => {
-                        const isActive = pathname === item.href;
+                        const isActive = item.href === "/dashboard/whatsapp"
+                            ? pathname === item.href
+                            : pathname.startsWith(item.href);
                         return (
                             <Link
                                 key={index}

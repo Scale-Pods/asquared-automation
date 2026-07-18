@@ -1,7 +1,10 @@
 export function parseMsg(raw: any): { date: Date | null; content: string } {
     if (!raw || !String(raw).trim()) return { date: null, content: "" };
     const content = String(raw).trim();
-    if (content.length >= 10 && !isNaN(new Date(content).getTime())) {
+    // Only treat the whole string as "just a date" when it has no other lines/text —
+    // `new Date(...)` is lenient and will parse a multi-line string that merely ends
+    // with a date, which previously caused message text to be discarded entirely.
+    if (!content.includes('\n') && content.length >= 10 && !isNaN(new Date(content).getTime())) {
         if (content.includes('T') || (content.includes('-') && content.includes(':'))) {
             return { date: new Date(content), content: "" };
         }
@@ -183,16 +186,15 @@ export function processReplyLeads(leads: any[]): ReplyDataItem[] {
     return result;
 }
 
-export async function fetchAllRows(baseUrl: string, headers: Record<string, string>, table: string, dateColumn: string | null, from: string | null, to: string | null, extraParams?: URLSearchParams): Promise<any[]> {
+export async function fetchAllRows(baseUrl: string, headers: Record<string, string>, table: string, dateColumn: string | null, from: string | null, to: string | null, extraParams?: URLSearchParams, columns?: string): Promise<any[]> {
     // Supabase PostgREST silently caps responses at 1000 rows per request.
     // We must use PAGE_SIZE = 1000 so that receiving exactly 1000 signals "there may be more rows".
     // Receiving < 1000 signals we've reached the last page.
     const PAGE_SIZE = 1000;
-    let allData: any[] = [];
-    let offset = 0;
-    while (true) {
+
+    const buildUrl = (offset: number) => {
         const params = new URLSearchParams({
-            select: '*',
+            select: columns || '*',
             offset: String(offset),
             limit: String(PAGE_SIZE),
         });
@@ -209,24 +211,60 @@ export async function fetchAllRows(baseUrl: string, headers: Record<string, stri
         if (extraParams) {
             extraParams.forEach((val, key) => params.append(key, val));
         }
-        const url = `${baseUrl}/${table}?${params.toString()}`;
+        return `${baseUrl}/${table}?${params.toString()}`;
+    };
+
+    const fetchPage = async (offset: number): Promise<any[]> => {
+        const pageHeaders = {
+            ...headers,
+            // Use Range header for reliable pagination alongside limit/offset
+            'Range-Unit': 'items',
+            'Range': `${offset}-${offset + PAGE_SIZE - 1}`,
+        };
         try {
-            const pageHeaders = {
-                ...headers,
-                // Use Range header for reliable pagination alongside limit/offset
-                'Range-Unit': 'items',
-                'Range': `${offset}-${offset + PAGE_SIZE - 1}`,
-            };
-            const res = await fetch(url, { headers: pageHeaders, cache: 'no-store' });
+            const res = await fetch(buildUrl(offset), { headers: pageHeaders, cache: 'no-store' });
             // 206 Partial Content = more pages exist; 200 = last page
-            if (!res.ok && res.status !== 206) { console.error(`fetchAllRows: ${table} returned ${res.status} for URL ${url}`); break; }
+            if (!res.ok && res.status !== 206) { console.error(`fetchAllRows: ${table} returned ${res.status}`); return []; }
             const data = await res.json();
-            if (!Array.isArray(data) || data.length === 0) break;
-            allData = allData.concat(data);
-            // If we got fewer rows than PAGE_SIZE (Supabase's real cap), we're done
-            if (data.length < PAGE_SIZE) break;
-            offset += PAGE_SIZE;
-        } catch (e) { console.error(`fetchAllRows: ${table} threw`, e); break; }
+            return Array.isArray(data) ? data : [];
+        } catch (e) { console.error(`fetchAllRows: ${table} threw`, e); return []; }
+    };
+
+    // Fetch the first page, then — if it's full — fetch remaining pages in parallel using the
+    // Content-Range total instead of looping sequentially page-by-page.
+    const firstPageHeaders = { ...headers, 'Range-Unit': 'items', 'Range': `0-${PAGE_SIZE - 1}`, 'Prefer': 'count=exact' };
+    let firstData: any[];
+    let total: number | null = null;
+    try {
+        const res = await fetch(buildUrl(0), { headers: firstPageHeaders, cache: 'no-store' });
+        if (!res.ok && res.status !== 206) { console.error(`fetchAllRows: ${table} returned ${res.status}`); return []; }
+        firstData = await res.json();
+        if (!Array.isArray(firstData)) firstData = [];
+        const cr = res.headers.get('content-range');
+        if (cr) { const m = cr.match(/\/(\d+)$/); if (m) total = parseInt(m[1], 10); }
+    } catch (e) { console.error(`fetchAllRows: ${table} threw`, e); return []; }
+
+    if (firstData.length < PAGE_SIZE) return firstData;
+
+    const remainingPages: number[] = [];
+    if (total !== null) {
+        for (let offset = PAGE_SIZE; offset < total; offset += PAGE_SIZE) remainingPages.push(offset);
+    }
+
+    if (remainingPages.length > 0) {
+        const restResults = await Promise.all(remainingPages.map(offset => fetchPage(offset)));
+        return [firstData, ...restResults].flat();
+    }
+
+    // Total unknown (no content-range) — fall back to sequential paging as before.
+    let allData = firstData;
+    let offset = PAGE_SIZE;
+    while (true) {
+        const data = await fetchPage(offset);
+        if (data.length === 0) break;
+        allData = allData.concat(data);
+        if (data.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
     }
     return allData;
 }

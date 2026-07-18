@@ -5,13 +5,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-    RefreshCw,
     MessageSquare,
     User,
     Bot,
     Link as LinkIcon,
-    Check
+    Check,
+    Mic,
 } from "lucide-react";
+import { buildOwnerTimeline } from "@/lib/master-leads-utils";
 
 interface OwnerChatDetailProps {
     owner: any;
@@ -25,115 +26,19 @@ export function OwnerChatDetail({ owner, onClose }: OwnerChatDetailProps) {
     const handleCopyLink = () => {
         if (!owner) return;
         const baseUrl = window.location.origin;
-        // Use ID for stable routing, fallback to phone
-        const phone = owner.contactNo || owner.Phone || owner.phone || "";
-        const shareId = owner.id ? `master-${owner.id}` : phone;
+        const phone = owner["Contact Number"] || owner.contactNo || owner.phone || "";
+        const shareId = owner.master_leads_id ? `master-${owner.master_leads_id}` : phone;
         const shareUrl = `${baseUrl}/dashboard/whatsapp/chat/${encodeURIComponent(shareId)}`;
-        
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(shareUrl).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-            }).catch(err => {
-                console.error("Failed to copy link:", err);
-            });
-        } else {
-            const textArea = document.createElement("textarea");
-            textArea.value = shareUrl;
-            document.body.appendChild(textArea);
-            textArea.select();
-            try {
-                document.execCommand('copy');
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-            } catch (err) {
-                console.error("Fallback copy failed:", err);
-            }
-            document.body.removeChild(textArea);
-        }
+
+        navigator.clipboard.writeText(shareUrl).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }).catch(() => {});
     };
 
     useEffect(() => {
         if (!owner) return;
-
-        const timeline: any[] = [];
-        let seq = 1;
-
-        const parseOwnerMsg = (raw: any, label: string, type: 'bot' | 'user', sequence: number) => {
-            if (!raw || !String(raw).trim()) return null;
-            const content = String(raw).trim();
-
-            // Check for ISO timestamps
-            const isoRegex = /\n{1,2}(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.+)$/;
-            const isoMatch = content.match(isoRegex);
-            if (isoMatch) {
-                return {
-                    type,
-                    content: content.replace(isoRegex, '').trim(),
-                    label,
-                    date: isoMatch[1],
-                    sequence
-                };
-            }
-
-            // Check for "YYYY-MM-DD HH:MM:SS" on the last line
-            const lines = content.split('\n');
-            const lastLine = lines[lines.length - 1].trim();
-            const spaceDateRegex = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/;
-            if (lines.length > 1 && spaceDateRegex.test(lastLine)) {
-                const d = new Date(lastLine.replace(' ', 'T'));
-                if (!isNaN(d.getTime())) {
-                    return {
-                        type,
-                        content: lines.slice(0, -1).join('\n').trim() || 'Message Received',
-                        label,
-                        date: d.toISOString(),
-                        sequence
-                    };
-                }
-            }
-
-            return { type, content, label, date: null, sequence };
-        };
-
-        // Flow: Whatsapp_1 (bot) → User_Replied_1 → Bot_Replied_1 → User_Replied_2 → Bot_Replied_2 ...
-
-        // 1. Initial outreach from bot
-        const wp1 = owner["Whatsapp_1"];
-        const wp1Msg = parseOwnerMsg(wp1, "Whatsapp_1", "bot", seq++);
-        if (wp1Msg) {
-            // Attach status
-            (wp1Msg as any).tsStatus = owner["Whatsapp_1_status"] || null;
-            // If no date in content, use the Whatsapp_1_Date column
-            if (!wp1Msg.date && owner["Whatsapp_1_Date"]) {
-                const d = new Date(owner["Whatsapp_1_Date"]);
-                if (!isNaN(d.getTime())) wp1Msg.date = d.toISOString();
-            }
-            timeline.push(wp1Msg);
-        }
-
-        // 1b. Check for retry_1
-        const retry1 = owner["retry_1"];
-        const retry1Msg = parseOwnerMsg(retry1, "Retry 1", "bot", seq++);
-        if (retry1Msg) {
-            timeline.push(retry1Msg);
-        }
-
-        // 2. Paired rounds: User_Replied_i then Bot_Replied_i (up to 5)
-        for (let i = 1; i <= 5; i++) {
-            const userReply = owner[`User_Replied_${i}`];
-            const userMsg = parseOwnerMsg(userReply, `User_Replied_${i}`, "user", seq++);
-            if (userMsg) timeline.push(userMsg);
-
-            const botReply = owner[`Bot_Replied_${i}`];
-            const botMsg = parseOwnerMsg(botReply, `Bot_Replied_${i}`, "bot", seq++);
-            if (botMsg) {
-                (botMsg as any).tsStatus = owner[`Bot_Replied_Status_${i}`] || null;
-                timeline.push(botMsg);
-            }
-        }
-
-        setMessages(timeline);
+        setMessages(buildOwnerTimeline(owner));
     }, [owner]);
 
     if (!owner) {
@@ -146,14 +51,17 @@ export function OwnerChatDetail({ owner, onClose }: OwnerChatDetailProps) {
         );
     }
 
+    const name = owner["Owner Name"] || owner.name || "Owner";
+    const phone = owner["Contact Number"] || owner.contactNo || owner.phone || "—";
+
     return (
         <div className="space-y-6 flex flex-col h-full overflow-hidden max-h-[85vh]">
             {/* Header */}
             <div className="flex items-center justify-between shrink-0">
                 <div>
-                    <h2 className="text-xl font-bold text-slate-900">{owner.Name || owner.name || "Owner"}</h2>
+                    <h2 className="text-xl font-bold text-slate-900">{name}</h2>
                     <div className="flex items-center gap-2 text-xs text-slate-500">
-                        <span>{owner.contactNo || owner.Phone || owner.phone || "—"}</span>
+                        <span>{phone}</span>
                         <span>•</span>
                         <span className="text-amber-600 font-bold">Owner Lead</span>
                     </div>
@@ -189,8 +97,8 @@ export function OwnerChatDetail({ owner, onClose }: OwnerChatDetailProps) {
                         ) : (
                             messages.map((msg, idx) => {
                                 let tsPill: React.ReactNode = null;
-                                if (msg.type === 'bot' && (msg as any).tsStatus) {
-                                    const raw = String((msg as any).tsStatus);
+                                if (msg.type === 'bot' && msg.tsStatus) {
+                                    const raw = String(msg.tsStatus);
                                     const label = raw.split(' - ')[0].trim();
                                     const formatted = label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
                                     let cls = 'bg-emerald-500/30 text-emerald-100';
@@ -242,17 +150,43 @@ export function OwnerChatDetail({ owner, onClose }: OwnerChatDetailProps) {
                             <div className="space-y-3 text-sm">
                                 <div>
                                     <span className="text-[10px] font-bold text-slate-400 uppercase">Contact info</span>
-                                    <p className="font-medium text-slate-900 mt-1">{owner.contactNo || owner.Phone || owner.phone || "—"}</p>
-                                    
+                                    <p className="font-medium text-slate-900 mt-1">{phone}</p>
                                 </div>
-                               
+                                {owner["Location"] && (
+                                    <div>
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase">Location</span>
+                                        <p className="font-medium text-slate-900 mt-1">{owner["Location"]}</p>
+                                    </div>
+                                )}
+                                {owner["Project Name"] && (
+                                    <div>
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase">Project</span>
+                                        <p className="font-medium text-slate-900 mt-1">{owner["Project Name"]}</p>
+                                    </div>
+                                )}
                                 <div>
                                     <span className="text-[10px] font-bold text-slate-400 uppercase">Source Table</span>
-                                    <p className="font-bold text-amber-600 mt-1 text-xs">owner_data</p>
+                                    <p className="font-bold text-amber-600 mt-1 text-xs">master_leads</p>
                                 </div>
                             </div>
                         </CardContent>
                     </Card>
+
+                    {owner["voice_recording_url"] && (
+                        <Card className="border-slate-200 shadow-sm bg-white">
+                            <CardContent className="p-4 space-y-3">
+                                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                                    <Mic className="h-4 w-4 text-slate-400" /> Voice Call
+                                </h3>
+                                {owner["voice_call_status"] && (
+                                    <Badge variant="outline" className="text-[10px] uppercase text-indigo-700 border-indigo-200">
+                                        {owner["voice_call_status"]}
+                                    </Badge>
+                                )}
+                                <audio controls className="w-full h-9" src={owner["voice_recording_url"]} />
+                            </CardContent>
+                        </Card>
+                    )}
 
                     <Card className="border-slate-200 shadow-sm bg-white">
                         <CardContent className="p-4 space-y-4">

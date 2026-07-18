@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay } from 'date-fns';
 import { parseMsg, getMsgDateWithFallback, isWithinRange, fetchAllRows, processReplyLeads, parseTSDate } from '@/lib/server-parsers';
 import { consolidateLeads, RawLeadsResponse } from '@/lib/leads-utils';
+import { computeOwnerMetrics, OWNER_LIST_COLUMNS } from '@/lib/master-leads-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -135,7 +136,9 @@ export async function GET(req: Request) {
             nurtureUkRows,
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
-            fetchAllRows(baseUrl, headers, "master_leads", "Last Contacted", from, to),
+            // whatsapp_last_contacted is TEXT — filtered in-memory via computeOwnerMetrics.
+            // Narrow select= to only the columns metrics need (master_leads has 60+ columns).
+            fetchAllRows(baseUrl, headers, "master_leads", null, null, null, undefined, OWNER_LIST_COLUMNS),
             // No DB-level date filter on TEXT columns; in-memory isInRange handles it
             fetchAllRows(baseUrl, headers, "intro", null, from, to),
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
@@ -337,26 +340,7 @@ export async function GET(req: Request) {
         const totalRepliesAll = Object.values(tableReplies).reduce((a, b) => a + b, 0);
         const totalMsgsSentAll = Object.values(tableMsgsSent).reduce((a, b) => a + b, 0);
 
-        let ownerReachouts = 0, ownerReplies = 0, ownerMsgsSent = 0;
-        masterLeads.forEach((o: any) => {
-            const wp1 = o["Whatsapp_1"];
-            if (!wp1 || wp1 === "") return;
-
-            const wpDate = o["Whatsapp_1_Date"] ? new Date(o["Whatsapp_1_Date"]) : null;
-            if (!isInRange(wpDate)) return;
-
-            ownerReachouts++;
-            if (wp1) ownerMsgsSent++;
-            if (o["retry_1"]) ownerMsgsSent++;
-            for (let i = 1; i <= 5; i++) {
-                if (o[`Bot_Replied_${i}`]) ownerMsgsSent++;
-            }
-
-            const wtsReply = o["WTS_Reply_Track"];
-            if (wtsReply && wtsReply !== "" && String(wtsReply).toLowerCase() !== "no") {
-                ownerReplies++;
-            }
-        });
+        const ownerMetrics = computeOwnerMetrics(masterLeads, fromDate, toDate);
 
         const stats = {
             totalLeads: totalReachouts,
@@ -368,8 +352,6 @@ export async function GET(req: Request) {
             unresponsive: filteredLeads.length - uniqueLeadsContacted
         };
 
-        const ownerStats = { reachouts: ownerReachouts, replies: ownerReplies, msgsSent: ownerMsgsSent };
-
         const donutData = [
             { name: 'Total Leads', value: totalReachouts, color: '#8b5cf6' },
             { name: 'Messages Sent', value: totalMsgsSentAll, color: '#3b82f6' },
@@ -379,6 +361,8 @@ export async function GET(req: Request) {
         const trendData = Object.values(dailyGroups)
             .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
             .slice(-7);
+
+        const ownerStats = { reachouts: ownerMetrics.reachouts, replies: ownerMetrics.replies, msgsSent: ownerMetrics.msgsSent };
 
         return NextResponse.json({ stats, ownerStats, tableReachouts, tableReplies, tableMsgsSent, donutData, trendData, repliedLeads, replyData: processReplyLeads(repliedLeads) }, {
             headers: {

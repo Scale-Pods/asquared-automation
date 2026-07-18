@@ -1,8 +1,8 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { WhatsAppChatDetail } from "@/components/dashboard/whatsapp-chat-detail";
-import { OwnerChatDetail } from "@/components/dashboard/owner-chat-detail";
 import { ASLoader } from "@/components/as-loader";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, MessageSquare } from "lucide-react";
@@ -11,10 +11,10 @@ import Link from "next/link";
 export default function CustomerDetailPage({ params }: { params: Promise<{ customerId: string }> }) {
     const { customerId } = use(params);
     const decodedCustomerId = decodeURIComponent(customerId);
-    
+    const router = useRouter();
+
     const [loading, setLoading] = useState(true);
     const [foundType, setFoundType] = useState<"lead" | "owner" | "none" | "searching">("searching");
-    const [foundOwner, setFoundOwner] = useState<any>(null);
 
     useEffect(() => {
         async function findLead() {
@@ -52,17 +52,14 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ custo
                     }
                 }
 
-                // 2. Check owner leads if not explicitly a normal lead ID
+                // 2. Check owner leads if not explicitly a normal lead ID — redirect to the Owners tab on Chat
                 if (!isNormalPrefix) {
-                    const ownersRes = await fetch(`/api/owner-leads?search=${encodeURIComponent(searchVal)}`);
+                    const cleanId = isOwnerPrefix ? searchVal.split('-')[1] : searchVal;
+                    const ownersRes = await fetch(`/api/whatsapp/owners/${encodeURIComponent(cleanId)}`);
                     if (ownersRes.ok) {
-                        const ownersData = await ownersRes.json();
-                        const ownerData = ownersData.owner_data || [];
-                        const ownerFound = ownerData.find((o: any) => exactMatch(o, ['id', 'contactNo', 'Phone', 'phone', 'Contact Number']));
-                        if (ownerFound) {
-                            setFoundOwner(ownerFound);
-                            setFoundType("owner");
-                            setLoading(false);
+                        const ownerData = await ownersRes.json();
+                        if (ownerData && !ownerData.error) {
+                            router.replace(`/dashboard/whatsapp/chat?tab=master_leads&owner=${ownerData.master_leads_id}`);
                             return;
                         }
                     }
@@ -107,11 +104,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ custo
                     </Button>
                 </Link>
             </div>
-            {foundType === "lead" ? (
-                <WhatsAppChatDetail customerId={decodedCustomerId} />
-            ) : (
-                <OwnerChatDetail owner={foundOwner} />
-            )}
+            <WhatsAppChatDetail customerId={decodedCustomerId} />
         </div>
     );
 }

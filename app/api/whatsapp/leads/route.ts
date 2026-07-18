@@ -5,13 +5,14 @@ import { consolidateLeads, RawLeadsResponse, ConsolidatedLead } from '@/lib/lead
 
 export const dynamic = 'force-dynamic';
 
-// All available tables with display labels
+// All available tables with display labels.
+// Owners (master_leads) are handled separately by /api/whatsapp/owners — they don't share
+// this table's WhatsApp-eligibility schema (W.P_1 etc) and are never surfaced here.
 export const ALL_TABLES = [
     { key: 'intro',           label: 'Intro' },
     { key: 'intro_uk',        label: 'Intro UK' },
     { key: 'follow_up',       label: 'Follow Up' },
     { key: 'follow_up_uk',    label: 'Follow Up UK' },
-    { key: 'master_leads',    label: 'Master Leads' },
     { key: 'leads',           label: 'Leads' },
     { key: 'nurture_leads',   label: 'Nurture' },
     { key: 'nurture_leads_uk',label: 'Nurture UK' },
@@ -74,7 +75,6 @@ export async function GET(req: Request) {
             'follow_up_uk': 'follow_up_uk',
             'follow_up': 'follow_up',
             'intro': 'intro',
-            'master': 'master_leads',
             'leads': 'leads',
             'nurture_leads_uk': 'nurture_leads_uk',
             'nurture_leads': 'nurture_leads',
@@ -109,13 +109,7 @@ export async function GET(req: Request) {
                 
                 // If targetTable is explicitly set (e.g. searching by prefix ID), query by ID directly
                 if (targetTable) {
-                    if (table === 'master_leads') {
-                        if (isInt) {
-                            extraParams.append('master_leads_id', `eq.${cleanSearch}`);
-                        } else {
-                            extraParams.append('master_leads_id', `eq.-1`);
-                        }
-                    } else if (['intro', 'intro_uk', 'follow_up', 'follow_up_uk'].includes(table)) {
+                    if (['intro', 'intro_uk', 'follow_up', 'follow_up_uk'].includes(table)) {
                         extraParams.append('ID', `eq.${cleanSearch}`);
                     } else {
                         extraParams.append('id', `eq.${cleanSearch}`);
@@ -129,9 +123,6 @@ export async function GET(req: Request) {
                     } else if (['intro_uk', 'follow_up', 'follow_up_uk'].includes(table)) {
                         orFilter = `"Name".ilike.*${cleanSearch}*,"Phone".ilike.*${cleanSearch}*,"Email".ilike.*${cleanSearch}*`;
                         if (isInt) orFilter += `,"ID".eq.${cleanSearch}`;
-                    } else if (table === 'master_leads') {
-                        orFilter = `"Owner Name".ilike.*${cleanSearch}*,"Contact Number".ilike.*${cleanSearch}*,"Email".ilike.*${cleanSearch}*`;
-                        if (isInt) orFilter += `,master_leads_id.eq.${cleanSearch}`;
                     } else if (table === 'leads') {
                         orFilter = `name.ilike.*${cleanSearch}*,phone.ilike.*${cleanSearch}*,email.ilike.*${cleanSearch}*`;
                         if (isUuid) orFilter += `,id.eq.${cleanSearch}`;
@@ -152,7 +143,6 @@ export async function GET(req: Request) {
             introUkRows,
             followUpRows,
             followUpUkRows,
-            masterLeadsRows,
             leadsRows,
             nurtureRows,
             nurtureUkRows,
@@ -161,7 +151,6 @@ export async function GET(req: Request) {
             fetchTable("intro_uk", null),
             fetchTable("follow_up", null),
             fetchTable("follow_up_uk", null),
-            fetchTable("master_leads", "Last Contacted"),
             fetchTable("leads", "last_outreach_at"),
             fetchTable("nurture_leads", null),
             fetchTable("nurture_leads_uk", null),
@@ -233,7 +222,6 @@ export async function GET(req: Request) {
             intro_uk: introUkRows,
             follow_up: followUpRows,
             follow_up_uk: followUpUkRows,
-            master_leads: masterLeadsRows,
             leads: leadsRows
         };
 

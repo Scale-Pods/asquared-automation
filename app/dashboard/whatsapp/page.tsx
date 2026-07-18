@@ -181,20 +181,21 @@ export default function WhatsappDashboardPage() {
                         value={loading ? "..." : ownerStats.reachouts.toLocaleString()}
                         icon={Building2}
                         theme="amber"
-                        onClick={() => router.push('/dashboard/whatsapp/chat?tab=owners')}
+                        onClick={() => router.push('/dashboard/whatsapp/chat?tab=master_leads')}
                     />
                     <MetricCard
                         title="Owner Replies"
                         value={loading ? "..." : ownerStats.replies.toLocaleString()}
                         icon={MessageSquare}
                         theme="emerald"
-                        onClick={() => router.push('/dashboard/whatsapp/chat?tab=owners')}
+                        onClick={() => router.push('/dashboard/whatsapp/chat?tab=master_leads')}
                     />
                     <MetricCard
                         title="Owner Messages Sent"
                         value={loading ? "..." : ownerStats.msgsSent.toLocaleString()}
                         icon={Send}
                         theme="amber"
+                        onClick={() => router.push('/dashboard/whatsapp/chat?tab=master_leads')}
                     />
                 </div>
             </div>

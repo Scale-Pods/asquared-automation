@@ -4,6 +4,26 @@ import { fetchAllRows } from '@/lib/server-parsers';
 
 export const dynamic = 'force-dynamic';
 
+// Only the columns consolidateLeads() / getStagesForLead() actually read — intro/follow_up
+// tables have 10 extra rounds of W.P_Replied N / W.P_FollowUp N reply-cycle text that this
+// row-browsing view never displays, and select=* was pulling all of it on every page load.
+const INTRO_FAMILY_COLUMNS = [
+    '"ID"', '"Name"', '"Phone"', '"Email"', '"Replied"', '"Last Contacted"', '"Created At"', '"Updated At"',
+    '"Email_1"', '"Email_2"', '"Email_3"', '"Email_Replied"', '"Dropped"', '"Unsubscribed"',
+    '"Voice 1"', '"Voice 2"', '"FollowUp 48 Hr"',
+    '"W.P_1"', '"W.P_2"', '"W.P_3"', '"W.P_4"',
+    '"W.P_1 TS"', '"W.P_2 TS"', '"W.P_3 TS"', '"W.P_4 TS"',
+    '"WP_Replied_track"', '"WP_last_contacted"', '"Email_last_contacted"',
+    ...Array.from({ length: 10 }, (_, i) => `"W.P_Replied ${i + 1}"`),
+    ...Array.from({ length: 10 }, (_, i) => `"W.P_FollowUp ${i + 1}"`),
+    ...Array.from({ length: 10 }, (_, i) => `w_p_followup_ts_${i + 1}`),
+].join(',');
+
+const MASTER_LEADS_OVERVIEW_COLUMNS = [
+    'master_leads_id', '"Owner Name"', '"Contact Number"', 'created_at',
+    '"Last Contacted"', 'voice_call_status', 'note',
+].join(',');
+
 export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');
@@ -52,12 +72,17 @@ export async function GET(req: Request) {
     try {
         const [leadsResult, masterLeadsResult, introResult, introUkResult, followUpResult, followUpUkResult] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
-            fetchAllRows(baseUrl, headers, "master_leads", "last_contacted", from, to),
-            // No DB-level date filter on TEXT columns; in-memory created_at filter handles it
-            fetchAllRows(baseUrl, headers, "intro", null, from, to),
-            fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
-            fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
-            fetchAllRows(baseUrl, headers, "follow_up_uk", null, from, to)
+            // master_leads' "Last Contacted" is TEXT (unlike intro/follow_up's real timestamptz
+            // column of the same name), so it can't be used as a server-side range filter —
+            // filter on created_at (real timestamptz) instead; narrow columns regardless.
+            fetchAllRows(baseUrl, headers, "master_leads", "created_at", from, to, undefined, MASTER_LEADS_OVERVIEW_COLUMNS),
+            // intro/follow_up have real "Created At" timestamptz — filter server-side instead of
+            // fetching the whole table and checking dates in-memory. Narrow columns to what
+            // consolidateLeads() actually reads (drops 10 rounds of unused reply-cycle text).
+            fetchAllRows(baseUrl, headers, "intro", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS),
+            fetchAllRows(baseUrl, headers, "intro_uk", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS),
+            fetchAllRows(baseUrl, headers, "follow_up", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS),
+            fetchAllRows(baseUrl, headers, "follow_up_uk", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS),
         ]);
 
         const rawResponse: Record<string, any> = {

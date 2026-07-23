@@ -3,6 +3,35 @@ import { consolidateLeads } from '@/lib/leads-utils';
 
 export const dynamic = 'force-dynamic';
 
+// Only the columns consolidateLeads()/isWhatsAppEligible() actually read on intro/follow_up
+// family tables — select=* was pulling every column (60+, including long free-text bodies)
+// on every Chat-page tab load, which was the single most-called route in the app.
+const INTRO_FAMILY_COLUMNS = [
+    '"ID"', '"Name"', '"Phone"', '"Email"', '"Replied"', '"Last Contacted"', '"Created At"', '"Updated At"',
+    '"Email_1"', '"Email_2"', '"Email_3"', '"Email_Replied"', '"Dropped"', '"Unsubscribed"',
+    '"Voice 1"', '"Voice 2"', '"FollowUp 48 Hr"',
+    '"W.P_1"', '"W.P_2"', '"W.P_3"', '"W.P_4"',
+    '"W.P_1 TS"', '"W.P_2 TS"', '"W.P_3 TS"', '"W.P_4 TS"',
+    '"WP_Replied_track"', '"WP_last_contacted"', '"Email_last_contacted"',
+    ...Array.from({ length: 10 }, (_, i) => `"W.P_Replied ${i + 1}"`),
+    ...Array.from({ length: 10 }, (_, i) => `"W.P_FollowUp ${i + 1}"`),
+    ...Array.from({ length: 10 }, (_, i) => `w_p_followup_ts_${i + 1}`),
+].join(',');
+
+const NURTURE_COLUMNS = [
+    'id', 'name', '"Phone"', '"Replied"', 'created_at',
+    '"WP_Replied_track"', 'wp_last_contacted', '"Last Contacted"',
+    ...['week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
+        'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
+        'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4'],
+    ...['week1_wp_1_ts','week1_wp_2_ts','week1_wp_3_ts','week1_wp_4_ts',
+        'week2_wp_1_ts','week2_wp_2_ts','week2_wp_3_ts','week2_wp_4_ts',
+        'week3_wp_1_ts','week3_wp_2_ts','week3_wp_3_ts','week3_wp_4_ts'],
+    ...Array.from({ length: 10 }, (_, i) => `"W.P_Replied ${i + 1}"`),
+    ...Array.from({ length: 10 }, (_, i) => `"W.P_FollowUp ${i + 1}"`),
+    ...Array.from({ length: 10 }, (_, i) => `"W.P_FollowUp TS ${i + 1}"`),
+].join(',');
+
 export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get('from');
@@ -30,9 +59,9 @@ export async function GET(req: Request) {
         "Content-Type": "application/json"
     };
 
-    const fetchTableData = async (tableName: string, dateColumn?: string) => {
+    const fetchTableData = async (tableName: string, dateColumn?: string, columns?: string) => {
         const buildUrl = (offset: number, limit: number) => {
-            let url = `${baseUrl}/${tableName}?select=*&offset=${offset}&limit=${limit}`;
+            let url = `${baseUrl}/${tableName}?select=${encodeURIComponent(columns || '*')}&offset=${offset}&limit=${limit}`;
             if (dateColumn && from) url += `&%22${dateColumn}%22=gte.${from}`;
             if (dateColumn && to) url += `&%22${dateColumn}%22=lte.${to}`;
             return url;
@@ -141,8 +170,8 @@ export async function GET(req: Request) {
 
             const [results, nurtureResults] = await Promise.all([
                 // No DB-level date filter on TEXT columns; in-memory isWhatsAppEligible handles it
-                Promise.all(selected.map(t => fetchTableData(t))),
-                Promise.all(selectedNurture.map(t => fetchTableData(t)))
+                Promise.all(selected.map(t => fetchTableData(t, undefined, INTRO_FAMILY_COLUMNS))),
+                Promise.all(selectedNurture.map(t => fetchTableData(t, undefined, NURTURE_COLUMNS)))
             ]);
 
             const NURTURE_WP_COLS = [
@@ -155,13 +184,16 @@ export async function GET(req: Request) {
             nurtureKeys.forEach((key, i) => { NURTURE_TO_WP[key] = `W.P_${i + 1}`; });
             const NURTURE_TS_TO_WP: Record<string, string> = {};
             nurtureKeys.forEach((key, i) => { NURTURE_TS_TO_WP[`${key}_ts`] = `W.P_${i + 1} TS`; });
+            // nurture_leads/nurture_leads_uk use the same "W.P_Replied N"/"W.P_FollowUp N"/
+            // "W.P_FollowUp TS N" (capitalized, spaced) column convention as intro/follow_up —
+            // not lowercase snake_case.
             const REPLIED_MAP: Record<string, string> = {};
             const FOLLOWUP_MAP: Record<string, string> = {};
             const FOLLOWUP_TS_MAP: Record<string, string> = {};
             for (let i = 1; i <= 10; i++) {
-                REPLIED_MAP[`wp_replied_${i}`] = `W.P_Replied_${i}`;
-                FOLLOWUP_MAP[`wp_followup_${i}`] = `W.P_FollowUp_${i}`;
-                FOLLOWUP_TS_MAP[`wp_followup_ts_${i}`] = `W.P_FollowUp_${i} TS`;
+                REPLIED_MAP[`W.P_Replied ${i}`] = `W.P_Replied_${i}`;
+                FOLLOWUP_MAP[`W.P_FollowUp ${i}`] = `W.P_FollowUp_${i}`;
+                FOLLOWUP_TS_MAP[`W.P_FollowUp TS ${i}`] = `W.P_FollowUp_${i} TS`;
             }
 
             if (whatsappOnly) {
@@ -255,7 +287,7 @@ export async function GET(req: Request) {
             const selected = tables.filter(t => validTables.includes(t));
 
             const results = await Promise.all(
-                selected.map(t => fetchTableData(t, "Email_last_contacted"))
+                selected.map(t => fetchTableData(t, "Email_last_contacted", INTRO_FAMILY_COLUMNS))
             );
 
             const response: Record<string, any> = { master_leads: [] };
@@ -283,12 +315,12 @@ export async function GET(req: Request) {
 
         const [leadsResult, masterLeadsResult, introResult, introUkResult, followUpResult, followUpUkResult] = await Promise.all([
             fetchTableData("leads", "last_outreach_at"),
-            fetchTableData("master_leads", "Last Contacted"),
+            fetchTableData("master_leads", "created_at"),
             // No DB-level date filter on TEXT columns
-            fetchTableData("intro"),
-            fetchTableData("intro_uk"),
-            fetchTableData("follow_up"),
-            fetchTableData("follow_up_uk")
+            fetchTableData("intro", undefined, INTRO_FAMILY_COLUMNS),
+            fetchTableData("intro_uk", undefined, INTRO_FAMILY_COLUMNS),
+            fetchTableData("follow_up", undefined, INTRO_FAMILY_COLUMNS),
+            fetchTableData("follow_up_uk", undefined, INTRO_FAMILY_COLUMNS)
         ]);
 
         const [v1_i, v2_i, v1_iu, v2_iu, v1_fu, v2_fu, v1_fuu, v2_fuu] = await Promise.all([

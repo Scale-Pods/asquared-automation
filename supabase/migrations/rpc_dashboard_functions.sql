@@ -199,7 +199,8 @@ as $$
       vapi_account,
       count(*) as calls,
       count(*) filter (where picked_up) as picked_up,
-      count(*) filter (where completed) as completed
+      count(*) filter (where completed) as completed,
+      coalesce(sum(duration_seconds), 0) as duration_seconds
     from scored
     group by vapi_account
   ),
@@ -260,6 +261,10 @@ as $$
     'inboundDuration', totals.inbound_duration,
     'outboundDuration', totals.outbound_duration,
     'ownerWaitingAvailabilityCount', totals.owner_waiting_count,
+    'secondaryVoiceSeconds', coalesce((select duration_seconds from by_account where vapi_account = 'secondary'), 0),
+    'unknownVoiceSeconds', coalesce((select duration_seconds from by_account where vapi_account = 'unknown'), 0),
+    'ownerVoiceSeconds', coalesce((select duration_seconds from by_account where vapi_account = 'owners'), 0),
+    'normalVoiceSeconds', coalesce((select duration_seconds from by_account where vapi_account = 'normal'), 0),
     'durationData', coalesce((select jsonb_agg(jsonb_build_object('name', name, 'value', value)) from duration_buckets), '[]'::jsonb),
     'typesData', coalesce((select jsonb_agg(jsonb_build_object('name', name, 'value', value)) from types_data), '[]'::jsonb),
     'volumeData', coalesce((select jsonb_agg(jsonb_build_object('name', display, 'value', calls)) from daily), '[]'::jsonb),
@@ -931,6 +936,306 @@ $$;
 
 
 -- =============================================================================
+-- 6. COMBINED INTRO/INTRO_UK/FOLLOW_UP/FOLLOW_UP_UK OVERVIEW — replaces the
+--    full select=* fetch + in-memory reduce that used to run on every load of
+--    the WhatsApp Dashboard, WhatsApp Analytics, and Master Dashboard pages
+--    (this was the single largest source of Supabase egress in the app).
+--
+--    Business rules mirror app/api/whatsapp/overview/route.ts exactly:
+--    - A row is a "reachout" only if at least one of W.P_1..W.P_4 (or its TS)
+--      is non-empty/non-"No", AND its resolved reachout date falls in [from,to].
+--    - Reachout date = embedded date in W.P_1 content, else W.P_1 TS, else
+--      created_at (only as a last resort, when a message exists).
+--    - Messages sent = count of W.P_1..4 + W.P_FollowUp + W.P_FollowUp 1..10
+--      whose resolved date falls in [from,to].
+--    - Replied = WP_Replied_track is non-empty/non-"no" (date-checked if it has
+--      an embedded date), OR any W.P_Replied 1..10 is non-empty/non-"no".
+-- =============================================================================
+
+-- Extracts a trailing embedded date from free text content, matching parseMsg()
+-- in lib/server-parsers.ts: content ending in "\n\nYYYY-MM-DDTHH:MM:SS..." (ISO,
+-- double newline) or a last line containing both '-' and ':' (space-separated
+-- date/time). Returns NULL if no date is found — the caller falls back to
+-- created_at or a TS column, exactly like the Node implementation.
+create or replace function public.extract_embedded_date(txt text)
+returns timestamptz
+language plpgsql
+immutable
+as $$
+declare
+  lines text[];
+  last_line text;
+  candidate text;
+begin
+  if txt is null or btrim(txt) = '' then
+    return null;
+  end if;
+
+  -- ISO date on its own after a blank line: "...\n\n2026-07-18T13:55:46..."
+  candidate := substring(txt from '\n\n(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\n]*)$');
+  if candidate is not null then
+    return public.safe_to_timestamptz(candidate);
+  end if;
+
+  -- Last line looks like a date/time (contains both '-' and ':')
+  lines := regexp_split_to_array(btrim(txt), E'\n');
+  last_line := btrim(lines[array_upper(lines, 1)]);
+  if array_length(lines, 1) > 1 and position('-' in last_line) > 0 and position(':' in last_line) > 0 then
+    return public.safe_to_timestamptz(replace(last_line, ' ', 'T'));
+  end if;
+
+  return null;
+end;
+$$;
+
+create or replace function public.get_whatsapp_normal_overview(
+  p_from timestamptz default null,
+  p_to timestamptz default null
+)
+returns jsonb
+language plpgsql
+stable
+as $$
+declare
+  result jsonb;
+begin
+  with unioned as (
+    select "ID" as id, "Name" as name, "Phone" as phone, "Created At" as created_at, 'intro'::text as source_table,
+      "W.P_1", "W.P_2", "W.P_3", "W.P_4", "W.P_1 TS", "W.P_FollowUp 1", "W.P_FollowUp 2", "W.P_FollowUp 3",
+      "W.P_FollowUp 4", "W.P_FollowUp 5", "W.P_FollowUp 6", "W.P_FollowUp 7", "W.P_FollowUp 8", "W.P_FollowUp 9", "W.P_FollowUp 10",
+      w_p_followup_ts_1, w_p_followup_ts_2, w_p_followup_ts_3, w_p_followup_ts_4, w_p_followup_ts_5,
+      w_p_followup_ts_6, w_p_followup_ts_7, w_p_followup_ts_8, w_p_followup_ts_9, w_p_followup_ts_10,
+      "WP_Replied_track", "W.P_Replied 1", "W.P_Replied 2", "W.P_Replied 3", "W.P_Replied 4", "W.P_Replied 5",
+      "W.P_Replied 6", "W.P_Replied 7", "W.P_Replied 8", "W.P_Replied 9", "W.P_Replied 10"
+    from public.intro
+    union all
+    select "ID", "Name", "Phone", "Created At", 'intro_uk'::text,
+      "W.P_1", "W.P_2", "W.P_3", "W.P_4", "W.P_1 TS", "W.P_FollowUp 1", "W.P_FollowUp 2", "W.P_FollowUp 3",
+      "W.P_FollowUp 4", "W.P_FollowUp 5", "W.P_FollowUp 6", "W.P_FollowUp 7", "W.P_FollowUp 8", "W.P_FollowUp 9", "W.P_FollowUp 10",
+      w_p_followup_ts_1, w_p_followup_ts_2, w_p_followup_ts_3, w_p_followup_ts_4, w_p_followup_ts_5,
+      w_p_followup_ts_6, w_p_followup_ts_7, w_p_followup_ts_8, w_p_followup_ts_9, w_p_followup_ts_10,
+      "WP_Replied_track", "W.P_Replied 1", "W.P_Replied 2", "W.P_Replied 3", "W.P_Replied 4", "W.P_Replied 5",
+      "W.P_Replied 6", "W.P_Replied 7", "W.P_Replied 8", "W.P_Replied 9", "W.P_Replied 10"
+    from public.intro_uk
+    union all
+    select "ID", "Name", "Phone", "Created At", 'follow_up'::text,
+      "W.P_1", "W.P_2", "W.P_3", "W.P_4", "W.P_1 TS", "W.P_FollowUp 1", "W.P_FollowUp 2", "W.P_FollowUp 3",
+      "W.P_FollowUp 4", "W.P_FollowUp 5", "W.P_FollowUp 6", "W.P_FollowUp 7", "W.P_FollowUp 8", "W.P_FollowUp 9", "W.P_FollowUp 10",
+      w_p_followup_ts_1, w_p_followup_ts_2, w_p_followup_ts_3, w_p_followup_ts_4, w_p_followup_ts_5,
+      w_p_followup_ts_6, w_p_followup_ts_7, w_p_followup_ts_8, w_p_followup_ts_9, w_p_followup_ts_10,
+      "WP_Replied_track", "W.P_Replied 1", "W.P_Replied 2", "W.P_Replied 3", "W.P_Replied 4", "W.P_Replied 5",
+      "W.P_Replied 6", "W.P_Replied 7", "W.P_Replied 8", "W.P_Replied 9", "W.P_Replied 10"
+    from public.follow_up
+    union all
+    select "ID", "Name", "Phone", "Created At", 'follow_up_uk'::text,
+      "W.P_1", "W.P_2", "W.P_3", "W.P_4", "W.P_1 TS", "W.P_FollowUp 1", "W.P_FollowUp 2", "W.P_FollowUp 3",
+      "W.P_FollowUp 4", "W.P_FollowUp 5", "W.P_FollowUp 6", "W.P_FollowUp 7", "W.P_FollowUp 8", "W.P_FollowUp 9", "W.P_FollowUp 10",
+      w_p_followup_ts_1, w_p_followup_ts_2, w_p_followup_ts_3, w_p_followup_ts_4, w_p_followup_ts_5,
+      w_p_followup_ts_6, w_p_followup_ts_7, w_p_followup_ts_8, w_p_followup_ts_9, w_p_followup_ts_10,
+      "WP_Replied_track", "W.P_Replied 1", "W.P_Replied 2", "W.P_Replied 3", "W.P_Replied 4", "W.P_Replied 5",
+      "W.P_Replied 6", "W.P_Replied 7", "W.P_Replied 8", "W.P_Replied 9", "W.P_Replied 10"
+    from public.follow_up_uk
+  ),
+  base as (
+    select
+      id, name, phone, created_at, source_table,
+      -- Reachout date: embedded date in W.P_1, else W.P_1 TS, else created_at (only if a message exists)
+      coalesce(
+        public.extract_embedded_date("W.P_1"),
+        public.safe_to_timestamptz("W.P_1 TS"),
+        case when coalesce(btrim("W.P_1"), '') <> '' and lower(btrim("W.P_1")) <> 'no' then created_at end
+      ) as reachout_date,
+      (
+        (coalesce(btrim("W.P_1"), '') <> '' and lower(btrim("W.P_1")) <> 'no') or coalesce(btrim("W.P_1 TS"), '') <> ''
+        or (coalesce(btrim("W.P_2"), '') <> '' and lower(btrim("W.P_2")) <> 'no')
+        or (coalesce(btrim("W.P_3"), '') <> '' and lower(btrim("W.P_3")) <> 'no')
+        or (coalesce(btrim("W.P_4"), '') <> '' and lower(btrim("W.P_4")) <> 'no')
+      ) as has_any_msg,
+      -- Per-message resolved dates, used for both "sent in range" counting and the trend chart
+      array_remove(array[
+        coalesce(public.extract_embedded_date("W.P_1"), public.safe_to_timestamptz("W.P_1 TS")),
+        public.extract_embedded_date("W.P_2"),
+        public.extract_embedded_date("W.P_3"),
+        public.extract_embedded_date("W.P_4"),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 1"), public.safe_to_timestamptz(w_p_followup_ts_1)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 2"), public.safe_to_timestamptz(w_p_followup_ts_2)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 3"), public.safe_to_timestamptz(w_p_followup_ts_3)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 4"), public.safe_to_timestamptz(w_p_followup_ts_4)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 5"), public.safe_to_timestamptz(w_p_followup_ts_5)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 6"), public.safe_to_timestamptz(w_p_followup_ts_6)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 7"), public.safe_to_timestamptz(w_p_followup_ts_7)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 8"), public.safe_to_timestamptz(w_p_followup_ts_8)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 9"), public.safe_to_timestamptz(w_p_followup_ts_9)),
+        coalesce(public.extract_embedded_date("W.P_FollowUp 10"), public.safe_to_timestamptz(w_p_followup_ts_10))
+      ]::timestamptz[], null) as msg_dates,
+      -- Reply detection + reply date, same precedence as processReplyLeads/route.ts
+      (
+        (coalesce(btrim("WP_Replied_track"), '') <> '' and lower(btrim("WP_Replied_track")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 1"), '') <> '' and lower(btrim("W.P_Replied 1")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 2"), '') <> '' and lower(btrim("W.P_Replied 2")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 3"), '') <> '' and lower(btrim("W.P_Replied 3")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 4"), '') <> '' and lower(btrim("W.P_Replied 4")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 5"), '') <> '' and lower(btrim("W.P_Replied 5")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 6"), '') <> '' and lower(btrim("W.P_Replied 6")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 7"), '') <> '' and lower(btrim("W.P_Replied 7")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 8"), '') <> '' and lower(btrim("W.P_Replied 8")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 9"), '') <> '' and lower(btrim("W.P_Replied 9")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 10"), '') <> '' and lower(btrim("W.P_Replied 10")) <> 'no')
+      ) as has_reply,
+      coalesce(
+        public.extract_embedded_date("WP_Replied_track"),
+        public.extract_embedded_date("W.P_Replied 1"), public.extract_embedded_date("W.P_Replied 2"),
+        public.extract_embedded_date("W.P_Replied 3"), public.extract_embedded_date("W.P_Replied 4"),
+        public.extract_embedded_date("W.P_Replied 5"), public.extract_embedded_date("W.P_Replied 6"),
+        public.extract_embedded_date("W.P_Replied 7"), public.extract_embedded_date("W.P_Replied 8"),
+        public.extract_embedded_date("W.P_Replied 9"), public.extract_embedded_date("W.P_Replied 10")
+      ) as reply_date
+    from unioned
+  ),
+  eligible as (
+    select *
+    from base
+    where has_any_msg
+      and reachout_date is not null
+      and (p_from is null or reachout_date >= p_from)
+      and (p_to is null or reachout_date <= p_to)
+  ),
+  scored as (
+    select
+      *,
+      (select count(*) from unnest(msg_dates) d where p_from is null or (d >= p_from and (p_to is null or d <= p_to))) as sent_count_in_range,
+      (
+        -- Reply counts "in range" if it has a resolvable date that's in range, OR has no date at all
+        -- (treated as already-in-range since the lead itself passed the reachout-date filter above)
+        has_reply and (reply_date is null or ((p_from is null or reply_date >= p_from) and (p_to is null or reply_date <= p_to)))
+      ) as replied_in_range
+    from eligible
+  ),
+  per_table as (
+    select
+      source_table,
+      count(*) as reachouts,
+      sum(sent_count_in_range) as msgs_sent,
+      count(*) filter (where replied_in_range) as replies
+    from scored
+    group by source_table
+  ),
+  daily as (
+    select
+      to_char(coalesce(reachout_date, created_at), 'Mon DD') as date,
+      sum(sent_count_in_range) as sent,
+      count(*) filter (where replied_in_range) as replied
+    from scored
+    group by 1, to_char(coalesce(reachout_date, created_at), 'YYYYMMDD')
+    order by to_char(coalesce(reachout_date, created_at), 'YYYYMMDD')
+  )
+  select jsonb_build_object(
+    'totalReachouts', (select count(*) from scored),
+    'totalMsgsSent', coalesce((select sum(sent_count_in_range) from scored), 0),
+    'totalReplies', (select count(*) from scored where replied_in_range),
+    'waiting', (select count(*) from scored where sent_count_in_range > 0 and not replied_in_range),
+    'uniqueContacted', (select count(*) from scored where sent_count_in_range > 0),
+    'tableReachouts', coalesce((select jsonb_object_agg(source_table, reachouts) from per_table), '{}'::jsonb),
+    'tableReplies', coalesce((select jsonb_object_agg(source_table, replies) from per_table), '{}'::jsonb),
+    'tableMsgsSent', coalesce((select jsonb_object_agg(source_table, msgs_sent) from per_table), '{}'::jsonb),
+    'trend', coalesce((select jsonb_agg(jsonb_build_object('date', date, 'sent', sent, 'replied', replied)) from (
+      select * from daily order by date desc limit 7
+    ) t), '[]'::jsonb),
+    'oldestReachoutAt', (select min(reachout_date) from scored)
+  ) into result;
+
+  return result;
+end;
+$$;
+
+
+-- Reply-preview rows (name/phone/last-reply snippet) for the "Recent WhatsApp
+-- Replies" panel. Only replied rows are returned — NOT the whole table — and
+-- only the small set of columns needed to build a preview snippet, keeping
+-- payload size tiny compared to the old full-table fetch.
+drop function if exists public.get_whatsapp_reply_previews(timestamptz, timestamptz, int);
+create or replace function public.get_whatsapp_reply_previews(
+  p_from timestamptz default null,
+  p_to timestamptz default null,
+  p_limit int default 50
+)
+returns table (
+  id text,
+  name text,
+  phone text,
+  source_table text,
+  reply_content text,
+  reply_date timestamptz
+)
+language sql
+stable
+as $$
+  with unioned as (
+    select "ID" as id, "Name" as name, "Phone" as phone, "Created At" as created_at, 'intro'::text as source_table,
+      "WP_Replied_track", "W.P_Replied 1", "W.P_Replied 2", "W.P_Replied 3", "W.P_Replied 4", "W.P_Replied 5",
+      "W.P_Replied 6", "W.P_Replied 7", "W.P_Replied 8", "W.P_Replied 9", "W.P_Replied 10"
+    from public.intro
+    union all
+    select "ID", "Name", "Phone", "Created At", 'intro_uk'::text,
+      "WP_Replied_track", "W.P_Replied 1", "W.P_Replied 2", "W.P_Replied 3", "W.P_Replied 4", "W.P_Replied 5",
+      "W.P_Replied 6", "W.P_Replied 7", "W.P_Replied 8", "W.P_Replied 9", "W.P_Replied 10"
+    from public.intro_uk
+    union all
+    select "ID", "Name", "Phone", "Created At", 'follow_up'::text,
+      "WP_Replied_track", "W.P_Replied 1", "W.P_Replied 2", "W.P_Replied 3", "W.P_Replied 4", "W.P_Replied 5",
+      "W.P_Replied 6", "W.P_Replied 7", "W.P_Replied 8", "W.P_Replied 9", "W.P_Replied 10"
+    from public.follow_up
+    union all
+    select "ID", "Name", "Phone", "Created At", 'follow_up_uk'::text,
+      "WP_Replied_track", "W.P_Replied 1", "W.P_Replied 2", "W.P_Replied 3", "W.P_Replied 4", "W.P_Replied 5",
+      "W.P_Replied 6", "W.P_Replied 7", "W.P_Replied 8", "W.P_Replied 9", "W.P_Replied 10"
+    from public.follow_up_uk
+  ),
+  base as (
+    select
+      id, name, phone, created_at, source_table,
+      -- Take the latest non-empty reply field, preferring one with a resolvable date
+      coalesce(
+        nullif(btrim("W.P_Replied 10"), ''), nullif(btrim("W.P_Replied 9"), ''), nullif(btrim("W.P_Replied 8"), ''),
+        nullif(btrim("W.P_Replied 7"), ''), nullif(btrim("W.P_Replied 6"), ''), nullif(btrim("W.P_Replied 5"), ''),
+        nullif(btrim("W.P_Replied 4"), ''), nullif(btrim("W.P_Replied 3"), ''), nullif(btrim("W.P_Replied 2"), ''),
+        nullif(btrim("W.P_Replied 1"), ''), nullif(btrim("WP_Replied_track"), '')
+      ) as reply_content_raw,
+      coalesce(
+        public.extract_embedded_date("W.P_Replied 10"), public.extract_embedded_date("W.P_Replied 9"),
+        public.extract_embedded_date("W.P_Replied 8"), public.extract_embedded_date("W.P_Replied 7"),
+        public.extract_embedded_date("W.P_Replied 6"), public.extract_embedded_date("W.P_Replied 5"),
+        public.extract_embedded_date("W.P_Replied 4"), public.extract_embedded_date("W.P_Replied 3"),
+        public.extract_embedded_date("W.P_Replied 2"), public.extract_embedded_date("W.P_Replied 1"),
+        public.extract_embedded_date("WP_Replied_track"),
+        created_at
+      ) as reply_date,
+      (
+        (coalesce(btrim("WP_Replied_track"), '') <> '' and lower(btrim("WP_Replied_track")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 1"), '') <> '' and lower(btrim("W.P_Replied 1")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 2"), '') <> '' and lower(btrim("W.P_Replied 2")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 3"), '') <> '' and lower(btrim("W.P_Replied 3")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 4"), '') <> '' and lower(btrim("W.P_Replied 4")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 5"), '') <> '' and lower(btrim("W.P_Replied 5")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 6"), '') <> '' and lower(btrim("W.P_Replied 6")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 7"), '') <> '' and lower(btrim("W.P_Replied 7")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 8"), '') <> '' and lower(btrim("W.P_Replied 8")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 9"), '') <> '' and lower(btrim("W.P_Replied 9")) <> 'no')
+        or (coalesce(btrim("W.P_Replied 10"), '') <> '' and lower(btrim("W.P_Replied 10")) <> 'no')
+      ) as has_reply
+    from unioned
+  )
+  select id, name, phone, source_table, reply_content_raw, reply_date
+  from base
+  where has_reply
+    and (p_from is null or reply_date >= p_from)
+    and (p_to is null or reply_date <= p_to)
+  order by reply_date desc nulls last
+  limit p_limit;
+$$;
+
+
+-- =============================================================================
 -- Grants — allow the API (service role) to call these. Adjust if using a
 -- different role name; service_role already bypasses RLS by default in Supabase.
 -- =============================================================================
@@ -945,3 +1250,6 @@ grant execute on function public.get_whatsapp_leads to service_role, anon, authe
 grant execute on function public.get_whatsapp_table_stats to service_role, anon, authenticated;
 grant execute on function public.get_nurture_leads to service_role, anon, authenticated;
 grant execute on function public.get_nurture_table_stats to service_role, anon, authenticated;
+grant execute on function public.extract_embedded_date to service_role, anon, authenticated;
+grant execute on function public.get_whatsapp_normal_overview to service_role, anon, authenticated;
+grant execute on function public.get_whatsapp_reply_previews to service_role, anon, authenticated;

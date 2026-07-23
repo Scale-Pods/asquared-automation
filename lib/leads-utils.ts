@@ -55,7 +55,7 @@ function getVal(obj: any, keys: string[]) {
     return undefined;
 }
 
-function getWhatsAppHistory(l: any) {
+export function getWhatsAppHistory(l: any) {
     const history: any = {};
     for (let i = 1; i <= 10; i++) {
         history[`W.P_Replied_${i}`] = getVal(l, [`W.P_Replied ${i}`, `W.P_Replied_${i}`]);

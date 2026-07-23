@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchAllRows } from '@/lib/server-parsers';
-import { consolidateLeads, RawLeadsResponse, ConsolidatedLead } from '@/lib/leads-utils';
+import { consolidateLeads, getWhatsAppHistory, RawLeadsResponse, ConsolidatedLead } from '@/lib/leads-utils';
 import { callRpc } from '@/lib/supabase-rpc';
 
 export const dynamic = 'force-dynamic';
@@ -212,15 +212,34 @@ async function handleIdLookup(search: string, prefix: string, targetTable: strin
                 updated_at: l.updated_at,
             })) as any;
         } else if (['nurture_leads', 'nurture_leads_uk'].includes(targetTable)) {
-            consolidatedLeads = rows.map((l: any) => ({
-                ...l,
-                id: `${targetTable}-${l.id}`,
-                name: l.name || 'Guest',
-                phone: l.Phone || 'Unknown',
-                source_loop: targetTable === 'nurture_leads' ? 'Nurture' : 'Nurture UK',
-                source_table: targetTable,
-                WP_Replied_track: l.WP_Replied_track || '',
-            })) as any;
+            consolidatedLeads = rows.map((l: any) => {
+                const stages: string[] = [];
+                const stage_data: Record<string, any> = {};
+                (['week1', 'week2', 'week3'] as const).forEach((week) => {
+                    for (let i = 1; i <= 4; i++) {
+                        const val = l[`${week}_wp_${i}`];
+                        if (val !== undefined && val !== null && String(val).trim() !== "") {
+                            const stageName = `${week}_wp_${i}`;
+                            stages.push(stageName);
+                            stage_data[stageName] = val;
+                        }
+                    }
+                });
+
+                return {
+                    ...l,
+                    ...getWhatsAppHistory(l),
+                    id: `${targetTable}-${l.id}`,
+                    name: l.name || 'Guest',
+                    phone: l.Phone || 'Unknown',
+                    replied: l.Replied || (stage_data && Object.keys(stage_data).length ? 'Yes' : 'No'),
+                    source_loop: targetTable === 'nurture_leads' ? 'Nurture' : 'Nurture UK',
+                    source_table: targetTable,
+                    stages_passed: stages,
+                    stage_data,
+                    WP_Replied_track: l.WP_Replied_track || '',
+                };
+            }) as any;
         }
 
         return NextResponse.json({

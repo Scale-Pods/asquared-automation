@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay } from 'date-fns';
 import { parseMsg, parseTSDate, getMsgDateWithFallback, isWithinRange, fetchAllRows } from '@/lib/server-parsers';
 import { consolidateLeads, RawLeadsResponse } from '@/lib/leads-utils';
-import { computeOwnerMetrics, OWNER_LIST_COLUMNS } from '@/lib/master-leads-utils';
+import { callRpc } from '@/lib/supabase-rpc';
 
 export const dynamic = 'force-dynamic';
 
@@ -167,7 +167,7 @@ export async function GET(req: Request) {
 
         const [
             leadsRows,
-            masterLeads,
+            ownerMetrics,
             introRows,
             introUkRows,
             followUpRows,
@@ -176,9 +176,8 @@ export async function GET(req: Request) {
             nurtureUkRows,
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
-            // whatsapp_last_contacted is TEXT — filtered in-memory via computeOwnerMetrics.
-            // Narrow select= to only the columns metrics need (master_leads has 60+ columns).
-            fetchAllRows(baseUrl, headers, "master_leads", null, null, null, undefined, OWNER_LIST_COLUMNS),
+            // Owner stats now computed entirely in Postgres — no more full master_leads fetch here.
+            callRpc('get_owner_metrics', { p_from: from || null, p_to: to || null }),
             // No DB-level date filter on TEXT columns; in-memory isInRange handles it
             fetchAllRows(baseUrl, headers, "intro", null, from, to),
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
@@ -392,9 +391,6 @@ export async function GET(req: Request) {
         const trendData = Object.values(groups)
             .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
             .slice(-7);
-
-        // Owner stats
-        const ownerMetrics = computeOwnerMetrics(masterLeads, fromDate, toDate);
 
         // Round data for bar chart
         const roundLabels = ['Round 1', 'Round 2', 'Round 3', 'Round 4', 'Round 5', 'Round 6', 'Round 12+', 'Follow-up'];

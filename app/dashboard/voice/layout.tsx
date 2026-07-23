@@ -8,7 +8,6 @@ import {
     Phone,
     BarChart3,
     ArrowLeft,
-    Mail,
     MessageCircle,
     Mic,
     ChevronDown
@@ -79,11 +78,6 @@ export default function VoiceLayout({
                             <DropdownMenuItem asChild className="hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white">
                                 <Link href="/dashboard" className="cursor-pointer w-full flex items-center">
                                     <LayoutDashboard className="mr-2 h-4 w-4" /> Master Overview
-                                </Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem asChild className="hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white">
-                                <Link href="/dashboard/email" className="cursor-pointer w-full flex items-center">
-                                    <Mail className="mr-2 h-4 w-4" /> Email Marketing
                                 </Link>
                             </DropdownMenuItem>
                             <DropdownMenuItem asChild className="hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white">

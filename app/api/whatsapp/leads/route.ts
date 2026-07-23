@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { startOfDay, endOfDay } from 'date-fns';
-import { parseMsg, fetchAllRows, parseTSDate } from '@/lib/server-parsers';
+import { fetchAllRows } from '@/lib/server-parsers';
 import { consolidateLeads, RawLeadsResponse, ConsolidatedLead } from '@/lib/leads-utils';
+import { callRpc } from '@/lib/supabase-rpc';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,26 +18,13 @@ export const ALL_TABLES = [
     { key: 'nurture_leads_uk',label: 'Nurture UK' },
 ] as const;
 
-function getReachoutDate(lead: any): Date | null {
-    const wp1 = lead["W.P_1"];
-    if (wp1 && wp1 !== "" && wp1 !== "No") {
-        const d = parseMsg(wp1).date;
-        if (d) return d;
-    }
-    const wp1Ts = lead["W.P_1 TS"];
-    if (wp1Ts) {
-        const d = parseTSDate(wp1Ts);
-        if (d) return d;
-    }
-    if (lead.last_outreach_at) {
-        const d = new Date(lead.last_outreach_at);
-        if (!isNaN(d.getTime())) return d;
-    }
-    if (wp1 && wp1 !== "" && wp1 !== "No") {
-        const d = new Date(lead.created_at || 0);
-        if (!isNaN(d.getTime())) return d;
-    }
-    return null;
+const RPC_TABLES = ['intro', 'intro_uk', 'follow_up', 'follow_up_uk'];
+const NURTURE_TABLES = ['nurture_leads', 'nurture_leads_uk'];
+
+function replyStatusToRpcParam(replyStatus: string): string {
+    if (replyStatus === 'replied') return 'replied';
+    if (replyStatus === 'sent') return 'sent';
+    return 'all';
 }
 
 export async function GET(req: Request) {
@@ -46,253 +33,120 @@ export async function GET(req: Request) {
     const to = searchParams.get('to');
     const search = searchParams.get('search') || '';
     const replyStatus = searchParams.get('replyStatus') || 'all';
-    const loop = searchParams.get('loop') || 'all';
-    const tableFilter = searchParams.get('table') || 'all'; // NEW: filter by specific table
+    const tableFilter = searchParams.get('table') || 'all';
     const page = parseInt(searchParams.get('page') || '1', 10);
     const pageSize = parseInt(searchParams.get('pageSize') || '10', 10);
 
-    const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-    const secretKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+    // ID-prefixed search (e.g. "intro_uk-458") is used by the chat-detail component to
+    // resolve a single lead by its full record — it needs every W.P_*/W.P_Replied_*
+    // message-body column to build the conversation timeline, which the summary RPCs
+    // deliberately don't return. Keep that one path on the full-row fetch.
+    const dashIdx = search.indexOf('-');
+    const prefix = dashIdx > 0 ? search.slice(0, dashIdx).toLowerCase() : null;
+    const ID_PREFIX_MAP: Record<string, string> = {
+        'intro_uk': 'intro_uk', 'follow_up_uk': 'follow_up_uk', 'follow_up': 'follow_up', 'intro': 'intro',
+        'leads': 'leads', 'nurture_leads_uk': 'nurture_leads_uk', 'nurture_leads': 'nurture_leads',
+    };
+    const isIdLookup = prefix !== null && ID_PREFIX_MAP[prefix] !== undefined;
 
-    if (!supabaseUrl || !secretKey) {
-        return NextResponse.json({ error: "Config missing" }, { status: 500 });
+    if (isIdLookup) {
+        return handleIdLookup(search, prefix!, ID_PREFIX_MAP[prefix!]);
     }
 
-    const baseUrl = `${supabaseUrl.replace(/\/$/, "")}/rest/v1`;
-    const headers: Record<string, string> = {
-        "apikey": secretKey,
-        "Authorization": `Bearer ${secretKey}`,
-        "Content-Type": "application/json"
-    };
-
     try {
-        const fromDate = from ? startOfDay(new Date(from)) : null;
-        const toDate = to ? endOfDay(new Date(to)) : null;
+        const tablesToQuery = tableFilter !== 'all' ? [tableFilter] : [...RPC_TABLES, ...NURTURE_TABLES, 'leads'];
 
-        // When searching by a prefixed ID (e.g. "intro_uk-458"), only fetch the matching table
-        const ID_PREFIX_MAP: Record<string, string> = {
-            'intro_uk': 'intro_uk',
-            'follow_up_uk': 'follow_up_uk',
-            'follow_up': 'follow_up',
-            'intro': 'intro',
-            'leads': 'leads',
-            'nurture_leads_uk': 'nurture_leads_uk',
-            'nurture_leads': 'nurture_leads',
-        };
-        let targetTable: string | null = null;
-        let cleanSearch = search;
-        if (search) {
-            const dashIdx = search.indexOf('-');
-            if (dashIdx > 0) {
-                const prefix = search.slice(0, dashIdx).toLowerCase();
-                if (ID_PREFIX_MAP[prefix]) {
-                    targetTable = ID_PREFIX_MAP[prefix];
-                    cleanSearch = search.slice(dashIdx + 1);
-                }
-            }
-        }
-
-        // If the table filter is set (and not 'all'), restrict to that table
-        const tableFilterActive = tableFilter !== 'all' ? tableFilter : null;
-
-        const shouldFetch = (table: string) =>
-            (targetTable === null || targetTable === table) &&
-            (tableFilterActive === null || tableFilterActive === table);
-
-        const fetchTable = (table: string, dateCol: string | null) => {
-            if (!shouldFetch(table)) return Promise.resolve([]);
-            
-            const extraParams = new URLSearchParams();
-            if (search) {
-                const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSearch);
-                const isInt = /^\d+$/.test(cleanSearch);
-                
-                // If targetTable is explicitly set (e.g. searching by prefix ID), query by ID directly
-                if (targetTable) {
-                    if (['intro', 'intro_uk', 'follow_up', 'follow_up_uk'].includes(table)) {
-                        extraParams.append('ID', `eq.${cleanSearch}`);
-                    } else {
-                        extraParams.append('id', `eq.${cleanSearch}`);
-                    }
-                } else {
-                    // General search across all tables using 'or' parameter
-                    let orFilter = '';
-                    if (table === 'intro') {
-                        orFilter = `"Name".ilike.*${cleanSearch}*,"Phone".ilike.*${cleanSearch}*,"Email".ilike.*${cleanSearch}*`;
-                        if (isUuid || isInt) orFilter += `,"ID".eq.${cleanSearch}`;
-                    } else if (['intro_uk', 'follow_up', 'follow_up_uk'].includes(table)) {
-                        orFilter = `"Name".ilike.*${cleanSearch}*,"Phone".ilike.*${cleanSearch}*,"Email".ilike.*${cleanSearch}*`;
-                        if (isInt) orFilter += `,"ID".eq.${cleanSearch}`;
-                    } else if (table === 'leads') {
-                        orFilter = `name.ilike.*${cleanSearch}*,phone.ilike.*${cleanSearch}*,email.ilike.*${cleanSearch}*`;
-                        if (isUuid) orFilter += `,id.eq.${cleanSearch}`;
-                    } else if (['nurture_leads', 'nurture_leads_uk'].includes(table)) {
-                        orFilter = `name.ilike.*${cleanSearch}*,"Phone".ilike.*${cleanSearch}*`;
-                        if (isUuid) orFilter += `,id.eq.${cleanSearch}`;
-                    }
-                    if (orFilter) {
-                        extraParams.append('or', `(${orFilter})`);
-                    }
-                }
-            }
-            return fetchAllRows(baseUrl, headers, table, dateCol, from, to, extraParams);
-        };
-
-        const [
-            introRows,
-            introUkRows,
-            followUpRows,
-            followUpUkRows,
-            leadsRows,
-            nurtureRows,
-            nurtureUkRows,
-        ] = await Promise.all([
-            fetchTable("intro", null),
-            fetchTable("intro_uk", null),
-            fetchTable("follow_up", null),
-            fetchTable("follow_up_uk", null),
-            fetchTable("leads", "last_outreach_at"),
-            fetchTable("nurture_leads", null),
-            fetchTable("nurture_leads_uk", null),
-        ]);
-
-        // Normalise nurture rows into consolidated-lead shape so existing filters work
-        // Map nurture week columns to W.P_1..W.P_12
-        const NURTURE_TO_WP: Record<string, string> = {};
-        const nurtureKeys = ['week1_wp_1','week1_wp_2','week1_wp_3','week1_wp_4',
-                            'week2_wp_1','week2_wp_2','week2_wp_3','week2_wp_4',
-                            'week3_wp_1','week3_wp_2','week3_wp_3','week3_wp_4'];
-        nurtureKeys.forEach((key, i) => { NURTURE_TO_WP[key] = `W.P_${i + 1}`; });
-
-        // Map nurture timestamp columns to W.P_* TS
-        const NURTURE_TS_TO_WP: Record<string, string> = {};
-        nurtureKeys.forEach((key, i) => { NURTURE_TS_TO_WP[`${key}_ts`] = `W.P_${i + 1} TS`; });
-
-        const normalizeNurture = (rows: any[], sourceLoop: string) =>
-            rows.map((l: any) => {
-                const tbl = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
-                const mapped: any = { ...l, id: `${tbl}-${l.id}` };
-                // Map content columns
-                nurtureKeys.forEach((nk) => {
-                    const wpKey = NURTURE_TO_WP[nk];
-                    if (l[nk] && String(l[nk]).trim() !== '') {
-                        mapped[wpKey] = l[nk];
-                    }
+        const results = await Promise.all(tablesToQuery.map(async (table) => {
+            if (RPC_TABLES.includes(table)) {
+                const rows = await callRpc<any[]>('get_whatsapp_leads', {
+                    p_table: table,
+                    p_from: from || null,
+                    p_to: to || null,
+                    p_search: search || null,
+                    p_reply_status: replyStatusToRpcParam(replyStatus),
+                    p_page: 1,
+                    p_page_size: 10000, // fetch all matching rows; final pagination happens after merging tables
                 });
-                // Map timestamp columns
-                nurtureKeys.forEach((nk) => {
-                    const tsKey = `${nk}_ts`;
-                    const wpTsKey = NURTURE_TS_TO_WP[tsKey];
-                    if (l[tsKey]) mapped[wpTsKey] = String(l[tsKey]);
+                return rows.map((r: any) => ({
+                    id: `${table}-${r.id}`,
+                    name: r.name,
+                    phone: r.phone,
+                    email: r.email,
+                    source_table: table,
+                    source_loop: table === 'intro' ? 'Intro' : table === 'intro_uk' ? 'Intro UK' : table === 'follow_up' ? 'Follow Up' : 'Follow Up UK',
+                    replied: r.replied,
+                    WP_Replied_track: r.replied ? 'Yes' : '',
+                    last_contacted: r.last_contacted,
+                    sent_count: r.sent_count,
+                }));
+            }
+            if (NURTURE_TABLES.includes(table)) {
+                const rows = await callRpc<any[]>('get_nurture_leads', {
+                    p_table: table,
+                    p_from: from || null,
+                    p_to: to || null,
+                    p_search: search || null,
+                    p_reply_status: replyStatusToRpcParam(replyStatus),
+                    p_page: 1,
+                    p_page_size: 10000,
                 });
-                
-                // Map replies, followups, and timestamps dynamically supporting both space and underscore variants
-                for (let i = 1; i <= 10; i++) {
-                    const repliedVal = l[`W.P_Replied ${i}`] ?? l[`wp_replied_${i}`] ?? l[`W.P_Replied_${i}`];
-                    if (repliedVal && String(repliedVal).trim() !== '') {
-                        mapped[`W.P_Replied_${i}`] = repliedVal;
-                    }
+                return rows.map((r: any) => ({
+                    id: `${table}-${r.id}`,
+                    name: r.name,
+                    phone: r.phone,
+                    email: '',
+                    source_table: table,
+                    source_loop: table === 'nurture_leads' ? 'Nurture' : 'Nurture UK',
+                    replied: r.replied,
+                    WP_Replied_track: r.replied ? 'Yes' : '',
+                    last_contacted: r.last_contacted,
+                    sent_count: r.sent_count,
+                }));
+            }
+            // `leads` table: real created_at/last_outreach_at, no message-body columns to
+            // scan — kept as a direct filtered fetch (no WhatsApp-eligibility concept here).
+            const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+            const secretKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+            const baseUrl = `${supabaseUrl.replace(/\/$/, "")}/rest/v1`;
+            const headers: Record<string, string> = {
+                "apikey": secretKey, "Authorization": `Bearer ${secretKey}`, "Content-Type": "application/json"
+            };
+            const rows = await fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to);
+            return rows
+                .filter((l: any) => l.response_received || l.last_outreach_at)
+                .filter((l: any) => {
+                    if (!search) return true;
+                    const q = search.toLowerCase();
+                    return (l.name || '').toLowerCase().includes(q) || (l.Phone || '').toLowerCase().includes(q) || (l.email || '').toLowerCase().includes(q);
+                })
+                .map((l: any) => ({
+                    id: `leads-${l.id}`,
+                    name: l.name || 'Guest',
+                    phone: l.Phone || 'Unknown',
+                    email: l.email,
+                    source_table: 'leads',
+                    source_loop: 'Leads',
+                    replied: !!l.response_received,
+                    WP_Replied_track: l.response_received ? 'Yes' : '',
+                    last_contacted: l.last_outreach_at,
+                    sent_count: l.current_step || 0,
+                }));
+        }));
 
-                    const followupVal = l[`W.P_FollowUp ${i}`] ?? l[`wp_followup_${i}`] ?? l[`W.P_FollowUp_${i}`];
-                    if (followupVal && String(followupVal).trim() !== '') {
-                        mapped[`W.P_FollowUp_${i}`] = followupVal;
-                    }
+        let merged = results.flat();
 
-                    const followupTsVal = l[`W.P_FollowUp TS ${i}`] ?? l[`wp_followup_ts_${i}`] ?? l[`W.P_FollowUp_TS_${i}`];
-                    if (followupTsVal) {
-                        mapped[`w_p_followup_ts_${i}`] = String(followupTsVal);
-                        mapped[`W.P_FollowUp_${i} TS`] = String(followupTsVal);
-                    }
-                }
-                mapped.source_loop = sourceLoop;
-                mapped.source_table = sourceLoop === 'Nurture' ? 'nurture_leads' : 'nurture_leads_uk';
-                mapped.phone = l.Phone || l.phone || '';
-                mapped["WP_Replied_track"] = l.WP_Replied_track || l.wp_replied_track || (l.replied === true ? 'Yes' : '') || '';
-                mapped["WP_last_contacted"] = l.wp_last_contacted || l["Last Contacted"] || '';
-                mapped.name = l.name || l.Name || '';
-                mapped.replied = l.replied === true ? 'Yes' : (l.Replied || l.replied || '');
-                return mapped;
-            });
-
-        const normNurture   = normalizeNurture(nurtureRows,   'Nurture');
-        const normNurtureUk = normalizeNurture(nurtureUkRows, 'Nurture UK');
-
-        const rawData: RawLeadsResponse = {
-            intro: introRows,
-            intro_uk: introUkRows,
-            follow_up: followUpRows,
-            follow_up_uk: followUpUkRows,
-            leads: leadsRows
-        };
-
-        let consolidatedLeads = [
-            ...consolidateLeads(rawData),
-            ...normNurture,
-            ...normNurtureUk,
-        ];
-
-        // Filter: must have some WhatsApp activity (skip when searching by id for chat detail lookup)
-        if (!search) {
-            consolidatedLeads = consolidatedLeads.filter((l: any) => {
-                const wp1 = l["W.P_1"];
-                if (wp1 && wp1 !== "" && wp1 !== "No") return true;
-                if (l["W.P_1 TS"]) return true;
-                for (let i = 2; i <= 12; i++) {
-                    if (l[`W.P_${i}`]) return true;
-                }
-                if (l.WP_Replied_track) return true;
-                return false;
-            });
-        }
-
-        // Filter: date range on reachout date
-        if (fromDate && toDate) {
-            consolidatedLeads = consolidatedLeads.filter((l: any) => {
-                const rd = getReachoutDate(l);
-                if (!rd) return false;
-                return rd >= fromDate && rd <= toDate;
-            });
-        }
-
-        // Filter: search (by name, email, phone, or id)
-        if (search) {
-            const q = search.toLowerCase();
-            consolidatedLeads = consolidatedLeads.filter((l: ConsolidatedLead) =>
-                (l.id || '').toLowerCase().includes(q) ||
-                (l.name || '').toLowerCase().includes(q) ||
-                (l.email || '').toLowerCase().includes(q) ||
-                (l.phone || '').toLowerCase().includes(q)
-            );
-        }
-
-        // Filter: reply status
         if (replyStatus !== 'all') {
-            consolidatedLeads = consolidatedLeads.filter((l: any) => {
-                const wtR = l["WP_Replied_track"];
-                let hasReplied = false;
-                if (wtR && wtR !== "" && String(wtR).toLowerCase() !== "no") {
-                    const parsed = parseMsg(wtR);
-                    if (parsed.date || String(wtR).toLowerCase() === "yes" || String(wtR).toLowerCase() === "replied") {
-                        hasReplied = true;
-                    }
-                }
-                return replyStatus === 'replied' ? hasReplied : !hasReplied;
-            });
+            merged = merged.filter((l: any) => replyStatus === 'replied' ? l.replied : !l.replied);
         }
 
-        // Filter: loop (legacy — kept for backward compat, table filter is the primary way now)
-        if (loop !== 'all') {
-            consolidatedLeads = consolidatedLeads.filter((l: ConsolidatedLead) => {
-                const sl = l.source_loop?.toLowerCase() || '';
-                if (loop === 'intro') return sl === 'intro';
-                if (loop === 'follow_up') return sl === 'follow up';
-                if (loop === 'nurture') return sl === 'nurture';
-                return true;
-            });
-        }
+        merged.sort((a: any, b: any) => {
+            const da = a.last_contacted ? new Date(a.last_contacted).getTime() : 0;
+            const db = b.last_contacted ? new Date(b.last_contacted).getTime() : 0;
+            return db - da;
+        });
 
-        const total = consolidatedLeads.length;
-        const paginatedLeads = consolidatedLeads.slice((page - 1) * pageSize, page * pageSize);
+        const total = merged.length;
+        const paginatedLeads = merged.slice((page - 1) * pageSize, page * pageSize);
 
         return NextResponse.json({
             leads: paginatedLeads,
@@ -304,6 +158,79 @@ export async function GET(req: Request) {
                 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
                 'Pragma': 'no-cache',
                 'Expires': '0',
+            }
+        });
+    } catch (error: any) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}
+
+// Full-row fetch for a single lead by prefixed ID — used by the chat-detail component,
+// which needs every W.P_N/W.P_Replied_N/W.P_FollowUp_N message-body column.
+async function handleIdLookup(search: string, prefix: string, targetTable: string) {
+    const cleanSearch = search.slice(prefix.length + 1);
+
+    const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+    const secretKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+
+    if (!supabaseUrl || !secretKey) {
+        return NextResponse.json({ error: "Config missing" }, { status: 500 });
+    }
+
+    const baseUrl = `${supabaseUrl.replace(/\/$/, "")}/rest/v1`;
+    const headers: Record<string, string> = {
+        "apikey": secretKey, "Authorization": `Bearer ${secretKey}`, "Content-Type": "application/json"
+    };
+
+    try {
+        const extraParams = new URLSearchParams();
+        if (['intro', 'intro_uk', 'follow_up', 'follow_up_uk'].includes(targetTable)) {
+            extraParams.append('ID', `eq.${cleanSearch}`);
+        } else {
+            extraParams.append('id', `eq.${cleanSearch}`);
+        }
+
+        const rows = await fetchAllRows(baseUrl, headers, targetTable, null, null, null, extraParams);
+
+        let consolidatedLeads: ConsolidatedLead[] = [];
+        if (['intro', 'intro_uk', 'follow_up', 'follow_up_uk'].includes(targetTable)) {
+            const rawData: RawLeadsResponse = { [targetTable]: rows } as RawLeadsResponse;
+            consolidatedLeads = consolidateLeads(rawData);
+        } else if (targetTable === 'leads') {
+            consolidatedLeads = rows.map((l: any) => ({
+                id: `leads-${l.id}`,
+                name: l.name || 'Guest',
+                phone: l.Phone || 'Unknown',
+                email: l.email || '',
+                replied: l.response_received ? 'Yes' : '',
+                current_loop: l.current_loop || '',
+                source_loop: 'Leads',
+                source_table: 'leads',
+                stages_passed: [],
+                stage_data: {},
+                created_at: l.created_at,
+                updated_at: l.updated_at,
+            })) as any;
+        } else if (['nurture_leads', 'nurture_leads_uk'].includes(targetTable)) {
+            consolidatedLeads = rows.map((l: any) => ({
+                ...l,
+                id: `${targetTable}-${l.id}`,
+                name: l.name || 'Guest',
+                phone: l.Phone || 'Unknown',
+                source_loop: targetTable === 'nurture_leads' ? 'Nurture' : 'Nurture UK',
+                source_table: targetTable,
+                WP_Replied_track: l.WP_Replied_track || '',
+            })) as any;
+        }
+
+        return NextResponse.json({
+            leads: consolidatedLeads,
+            total: consolidatedLeads.length,
+            page: 1,
+            pageSize: consolidatedLeads.length || 1,
+        }, {
+            headers: {
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
             }
         });
     } catch (error: any) {

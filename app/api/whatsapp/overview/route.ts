@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay } from 'date-fns';
 import { parseMsg, getMsgDateWithFallback, isWithinRange, fetchAllRows, processReplyLeads, parseTSDate } from '@/lib/server-parsers';
 import { consolidateLeads, RawLeadsResponse } from '@/lib/leads-utils';
-import { computeOwnerMetrics, OWNER_LIST_COLUMNS } from '@/lib/master-leads-utils';
+import { callRpc } from '@/lib/supabase-rpc';
 
 export const dynamic = 'force-dynamic';
 
@@ -127,7 +127,7 @@ export async function GET(req: Request) {
 
         const [
             leadsRows,
-            masterLeads,
+            ownerMetrics,
             introRows,
             introUkRows,
             followUpRows,
@@ -136,9 +136,8 @@ export async function GET(req: Request) {
             nurtureUkRows,
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
-            // whatsapp_last_contacted is TEXT — filtered in-memory via computeOwnerMetrics.
-            // Narrow select= to only the columns metrics need (master_leads has 60+ columns).
-            fetchAllRows(baseUrl, headers, "master_leads", null, null, null, undefined, OWNER_LIST_COLUMNS),
+            // Owner stats now computed entirely in Postgres — no more full master_leads fetch here.
+            callRpc('get_owner_metrics', { p_from: from || null, p_to: to || null }),
             // No DB-level date filter on TEXT columns; in-memory isInRange handles it
             fetchAllRows(baseUrl, headers, "intro", null, from, to),
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
@@ -339,8 +338,6 @@ export async function GET(req: Request) {
         const totalReachouts = Object.values(tableReachouts).reduce((a, b) => a + b, 0);
         const totalRepliesAll = Object.values(tableReplies).reduce((a, b) => a + b, 0);
         const totalMsgsSentAll = Object.values(tableMsgsSent).reduce((a, b) => a + b, 0);
-
-        const ownerMetrics = computeOwnerMetrics(masterLeads, fromDate, toDate);
 
         const stats = {
             totalLeads: totalReachouts,

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { startOfDay, endOfDay, subDays } from 'date-fns';
 import { processReplyLeads, fetchAllRows } from '@/lib/server-parsers';
-import { computeOwnerMetrics, OWNER_LIST_COLUMNS } from '@/lib/master-leads-utils';
+import { callRpc } from '@/lib/supabase-rpc';
 
 export const dynamic = 'force-dynamic';
 
@@ -95,7 +95,7 @@ export async function GET(req: Request) {
 
         const [
             leadsRows,
-            masterLeads,
+            ownerMetrics,
             introRows,
             introUkRows,
             followUpRows,
@@ -106,11 +106,8 @@ export async function GET(req: Request) {
             nurtureLeadsUkRows,
         ] = await Promise.all([
             fetchAllRows(baseUrl, headers, "leads", "created_at", from, to),
-            // whatsapp_last_contacted is TEXT, so master_leads is date-filtered in-memory (via computeOwnerMetrics) — not server-side.
-            // Narrow select= to only the columns metrics need (master_leads has 60+ columns
-            // including 10 rounds of free-text replies/follow-ups — select=* was the main
-            // cause of slow owners data loads).
-            fetchAllRows(baseUrl, headers, "master_leads", null, null, null, undefined, OWNER_LIST_COLUMNS),
+            // Owner stats now computed entirely in Postgres — no more full master_leads fetch here.
+            callRpc('get_owner_metrics', { p_from: from || null, p_to: to || null }),
             fetchAllRows(baseUrl, headers, "intro", null, from, to),
             fetchAllRows(baseUrl, headers, "intro_uk", null, from, to),
             fetchAllRows(baseUrl, headers, "follow_up", null, from, to),
@@ -329,18 +326,12 @@ export async function GET(req: Request) {
             totalVoiceSeconds += calculateDuration(call);
         });
         // --- Owner Stats (master_leads, scoped to WhatsApp-eligible rows via whatsapp_last_contacted) ---
-        const ownerMetrics = computeOwnerMetrics(masterLeads, fromDate, toDate);
         const totalOwnerLeads = ownerMetrics.totalOwners;
         const ownerWhatsappReachouts = ownerMetrics.reachouts;
         const ownerTotalReplies = ownerMetrics.replies;
 
-        let minOwnerWPDate: Date | null = null;
-        masterLeads.forEach((o: any) => {
-            if (!o["Whatsapp_1"]) return;
-            const d = o["whatsapp_last_contacted"] ? new Date(o["whatsapp_last_contacted"]) : null;
-            if (d && !isNaN(d.getTime()) && (!minOwnerWPDate || d < minOwnerWPDate)) minOwnerWPDate = d;
-        });
         const formatLabel = (d: Date | null) => d ? `Since ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : "Real-time";
+        const minOwnerWPDate = ownerMetrics.oldestContactedAt ? new Date(ownerMetrics.oldestContactedAt) : null;
         const ownerLeadsSince = formatLabel(minOwnerWPDate);
         const ownerWhatsappSince = formatLabel(minOwnerWPDate);
         const ownerRepliesSince = "Real-time";

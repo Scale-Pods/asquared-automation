@@ -19,6 +19,15 @@ const INTRO_FAMILY_COLUMNS = [
     ...Array.from({ length: 10 }, (_, i) => `w_p_followup_ts_${i + 1}`),
 ].join(',');
 
+// public.leads — real columns only, matching the actual schema (no stage/W.P_ columns exist
+// on this table; "Progress" stage-bar UI does not apply here).
+const LEADS_TABLE_COLUMNS = [
+    'id', 'bitrix_lead_id', 'lead_type', 'source', '"Phone"', 'email', 'name',
+    'current_loop', 'current_step', 'loop_started_at', 'last_outreach_at', 'status',
+    'is_active', 'response_received', 'created_at', 'updated_at', 'lead_status', 'description',
+    'call_sentiment1', 'call_sentiment2', 'call_sentiment3', 'call_sentiment4', 'call_sentiment5', 'call_sentiment6',
+].join(',');
+
 const MASTER_LEADS_OVERVIEW_COLUMNS = [
     'master_leads_id', '"Owner Name"', '"Contact Number"', 'created_at',
     '"Last Contacted"', 'voice_call_status', 'note',
@@ -70,19 +79,26 @@ export async function GET(req: Request) {
     };
 
     try {
+        // `type=normal` only ever needs public.leads — skip the intro/follow_up/master_leads
+        // fetches entirely rather than pulling them just to filter them back out below.
+        const needsIntroFamily = type === 'all' || type === 'owners';
+        const needsMaster = type === 'all' || type === 'owners';
+
         const [leadsResult, masterLeadsResult, introResult, introUkResult, followUpResult, followUpUkResult] = await Promise.all([
-            fetchAllRows(baseUrl, headers, "leads", "last_outreach_at", from, to),
+            fetchAllRows(baseUrl, headers, "leads", "created_at", from, to, undefined, LEADS_TABLE_COLUMNS),
             // master_leads' "Last Contacted" is TEXT (unlike intro/follow_up's real timestamptz
             // column of the same name), so it can't be used as a server-side range filter —
             // filter on created_at (real timestamptz) instead; narrow columns regardless.
-            fetchAllRows(baseUrl, headers, "master_leads", "created_at", from, to, undefined, MASTER_LEADS_OVERVIEW_COLUMNS),
+            needsMaster
+                ? fetchAllRows(baseUrl, headers, "master_leads", "created_at", from, to, undefined, MASTER_LEADS_OVERVIEW_COLUMNS)
+                : Promise.resolve([]),
             // intro/follow_up have real "Created At" timestamptz — filter server-side instead of
             // fetching the whole table and checking dates in-memory. Narrow columns to what
             // consolidateLeads() actually reads (drops 10 rounds of unused reply-cycle text).
-            fetchAllRows(baseUrl, headers, "intro", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS),
-            fetchAllRows(baseUrl, headers, "intro_uk", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS),
-            fetchAllRows(baseUrl, headers, "follow_up", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS),
-            fetchAllRows(baseUrl, headers, "follow_up_uk", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS),
+            needsIntroFamily ? fetchAllRows(baseUrl, headers, "intro", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS) : Promise.resolve([]),
+            needsIntroFamily ? fetchAllRows(baseUrl, headers, "intro_uk", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS) : Promise.resolve([]),
+            needsIntroFamily ? fetchAllRows(baseUrl, headers, "follow_up", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS) : Promise.resolve([]),
+            needsIntroFamily ? fetchAllRows(baseUrl, headers, "follow_up_uk", "Created At", from, to, undefined, INTRO_FAMILY_COLUMNS) : Promise.resolve([]),
         ]);
 
         const rawResponse: Record<string, any> = {

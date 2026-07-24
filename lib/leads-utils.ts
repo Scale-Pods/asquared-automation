@@ -37,6 +37,12 @@ export interface ConsolidatedLead {
     unsubscribed?: string;
     WP_last_contacted?: string;
     Email_last_contacted?: string;
+    // public.leads-only fields (Normal tab) — no stage/W.P_ columns exist on that table.
+    status?: string;
+    lead_status?: string;
+    lead_type?: string;
+    current_step?: number;
+    sentiment?: string;
     [key: string]: any;
 }
 
@@ -270,11 +276,13 @@ export function consolidateLeads(data: RawLeadsResponse): ConsolidatedLead[] {
 
     if (Array.isArray(data.leads) && data.leads.length > 0) {
         data.leads.forEach((l: any, idx: number) => {
+            const sentiment = [l.call_sentiment6, l.call_sentiment5, l.call_sentiment4, l.call_sentiment3, l.call_sentiment2, l.call_sentiment1]
+                .find((v) => v && String(v).trim() !== "");
             consolidatedLeads.push({
                 id: `leads-${l.id || idx}`,
                 lead_id: l.bitrix_lead_id || "",
-                name: String(l.name || l.customer_name || "Lead"),
-                phone: String(l.phone || ""),
+                name: String(l.name || "Lead"),
+                phone: String(l["Phone"] || ""),
                 email: String(l.email || "No Email"),
                 replied: l.response_received ? "Yes" : "No",
                 current_loop: l.current_loop || "Master",
@@ -286,6 +294,10 @@ export function consolidateLeads(data: RawLeadsResponse): ConsolidatedLead[] {
                 updated_at: l.updated_at || undefined,
                 last_contacted: l.last_outreach_at || undefined,
                 lead_status: l.lead_status || l.status || undefined,
+                status: l.status || undefined,
+                lead_type: l.lead_type || undefined,
+                current_step: l.current_step ?? undefined,
+                sentiment: sentiment || undefined,
                 description: l.description || undefined,
                 is_active: l.is_active ?? true
             });

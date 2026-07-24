@@ -193,7 +193,9 @@ export async function GET(req: Request) {
             for (let i = 1; i <= 10; i++) {
                 REPLIED_MAP[`W.P_Replied ${i}`] = `W.P_Replied_${i}`;
                 FOLLOWUP_MAP[`W.P_FollowUp ${i}`] = `W.P_FollowUp_${i}`;
-                FOLLOWUP_TS_MAP[`W.P_FollowUp TS ${i}`] = `W.P_FollowUp_${i} TS`;
+                // Dest key matches intro/follow_up's real w_p_followup_ts_N column naming —
+                // the chat page's date-range/message-status filters read that lowercase key.
+                FOLLOWUP_TS_MAP[`W.P_FollowUp TS ${i}`] = `w_p_followup_ts_${i}`;
             }
 
             if (whatsappOnly) {
@@ -225,7 +227,13 @@ export async function GET(req: Request) {
                             if (l[src] && String(l[src]).trim() !== '') mapped[dest] = l[src];
                         });
                         Object.entries(FOLLOWUP_TS_MAP).forEach(([src, dest]) => {
-                            if (l[src]) mapped[dest] = String(l[src]);
+                            // Populate both dest key conventions the chat page reads:
+                            // w_p_followup_ts_N (date-range filter) and "W.P_FollowUp_N TS" (sorting).
+                            if (l[src]) {
+                                mapped[dest] = String(l[src]);
+                                const num = dest.match(/\d+$/)?.[0];
+                                if (num) mapped[`W.P_FollowUp_${num} TS`] = String(l[src]);
+                            }
                         });
                         mapped.phone = l.Phone || l.phone || '';
                         mapped.name = l.name || l.Name || '';

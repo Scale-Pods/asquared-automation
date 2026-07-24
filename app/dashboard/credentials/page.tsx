@@ -60,8 +60,8 @@ export default function CredentialsPage() {
                     iconBg="bg-emerald-50"
                 >
                     <div className="grid gap-6 md:grid-cols-2">
-                        <ReadOnlyField label="WhatsApp Account 1 " value="xxx" />
-                        <ReadOnlyField label="WhatsApp Account 2" value="xxx" />
+                        <ReadOnlyField label="WhatsApp Account 1 " value="+971 58 916 5893" />
+                        
                     </div>
                 </CredentialSection>
 
@@ -73,20 +73,27 @@ export default function CredentialsPage() {
                     iconColor="text-cyan-600"
                     iconBg="bg-cyan-50"
                 >
-                    <div className="grid gap-8 md:grid-cols-3">
+                    <div className="grid gap-8 md:grid-cols-5">
                         {/* UK Section */}
                         <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-                            <ReadOnlyField label="DID Logic ( owners data )" value="+44 (20) 8097 8341" />
+                            <ReadOnlyField label="DID Logic ( owners data 1  )" value="+44 (20) 8097 0399" />
+                            <ReadOnlyField label="Agent ID" value="f99e8e9a-48b1-411f-806e-6cb7d1dde58b" />
+                        </div>
+                        <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                            <ReadOnlyField label="DID Logic ( owners data 2 )" value=" +44 (20) 8097 8341" />
                             <ReadOnlyField label="Agent ID" value="682cf6ae-23fd-44f3-a4a3-756998cd62c1" />
                         </div>
-
+                        <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                            <ReadOnlyField label="DID Logic ( owners data 3 )" value="+44 (20) 8097 1901  " />
+                            <ReadOnlyField label="Agent ID" value="91732d4e-3b60-4950-8aa6-4060c0803119" />
+                        </div>
                         {/* US Section */}
                         <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-                            <ReadOnlyField label="( Secondary leads )" value=" " />
+                            <ReadOnlyField label="( Secondary leads )" value="+44 (20) 8638 2632" />
                             <ReadOnlyField label="Agent ID" value="c552e5b3-6c41-41d2-83b4-7c820e0d14bb " />
                         </div>
                         <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-                            <ReadOnlyField label="DID Logic ( unknown leads )" value="" />
+                            <ReadOnlyField label="DID Logic ( unknown leads )" value="NOT CONNECTED" />
                             <ReadOnlyField label="Agent ID" value="3266ea3f-336e-436a-bd2a-63f196aab37f" />
                         </div>
                         

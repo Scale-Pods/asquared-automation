@@ -71,7 +71,7 @@ as $$
   with unioned as (
     select
       id, started_at, duration_seconds, cost_usd, customer_phone, customer_name,
-      lower(coalesce(status, '')) as status, type,
+      lower(coalesce(status, '')) as status_raw, type,
       (type = 'inboundPhoneCall') as is_inbound,
       'vapi'::text as source,
       lower(coalesce(vapi_account, 'normal')) as vapi_account_raw,
@@ -80,7 +80,7 @@ as $$
     union all
     select
       id, started_at, duration_seconds, cost_usd, customer_phone, customer_name,
-      lower(coalesce(status, '')) as status, type,
+      lower(coalesce(status, '')) as status_raw, type,
       (type = 'inboundPhoneCall') as is_inbound,
       'vapi'::text as source,
       lower(coalesce(vapi_account, 'normal')) as vapi_account_raw,
@@ -90,6 +90,16 @@ as $$
   normalized as (
     select
       *,
+      -- status_raw holds Vapi's raw endedReason (customer-ended-call, customer-did-not-answer,
+      -- customer-busy, pipeline-error-..., voicemail, etc) — bucket it into the same
+      -- answered/no-answer/busy/failed groups the frontend Status filter offers.
+      case
+        when status_raw in ('ended', 'customer-ended-call', 'assistant-ended-call', 'voicemail') then 'answered'
+        when status_raw like '%no-answer%' or status_raw like '%did-not-answer%' or status_raw like '%did_not_answer%' or status_raw like '%no_answer%' then 'no-answer'
+        when status_raw like '%busy%' then 'busy'
+        when status_raw like '%fail%' or status_raw like '%error%' then 'failed'
+        else 'answered'
+      end as status,
       case
         when vapi_account_raw = 'secondary' then 'secondary'
         when vapi_account_raw = 'unknown' then 'unknown'
@@ -104,13 +114,13 @@ as $$
     where (p_from is null or started_at >= p_from)
       and (p_to is null or started_at <= p_to)
       and (p_account = 'all' or p_account = 'vapi' or vapi_account = p_account)
-      and (p_status = 'all' or status = p_status)
+      and (p_status = 'all' or status = lower(p_status))
       and (
         p_voice_status = 'all'
-        or (p_voice_status = 'did not answer' and lower(coalesce(voice_call_status, '')) in ('no answer', 'did_not_answer', 'no_answer'))
-        or lower(coalesce(voice_call_status, '')) = lower(p_voice_status)
+        or (lower(p_voice_status) = 'did not answer' and lower(coalesce(voice_call_status, '')) in ('no answer', 'did_not_answer', 'no_answer'))
+        or lower(btrim(coalesce(voice_call_status, ''))) like lower(p_voice_status) || '%'
       )
-      and (p_type = 'all' or lower(type) = p_type or (p_type = 'inbound' and is_inbound) or (p_type = 'outbound' and not is_inbound))
+      and (p_type = 'all' or (lower(p_type) = 'inbound' and is_inbound) or (lower(p_type) = 'outbound' and not is_inbound))
       and (
         p_search is null or p_search = ''
         or customer_phone ilike '%' || p_search || '%'
@@ -126,10 +136,10 @@ as $$
     status, type, is_inbound, source, vapi_account, voice_call_status, note, total_count
   from counted
   order by
-    case when p_sort = 'oldest' then started_at end asc,
-    case when p_sort = 'longest' then duration_seconds end desc,
-    case when p_sort = 'shortest' then duration_seconds end asc,
-    case when p_sort = 'newest' or p_sort is null then started_at end desc
+    case when p_sort = 'oldest' then started_at end asc nulls last,
+    case when p_sort = 'longest' then coalesce(duration_seconds, 0) end desc nulls last,
+    case when p_sort = 'shortest' then coalesce(duration_seconds, 0) end asc nulls last,
+    case when p_sort = 'newest' or p_sort not in ('oldest', 'longest', 'shortest') then started_at end desc nulls last
   limit p_page_size
   offset greatest(0, (p_page - 1) * p_page_size);
 $$;
@@ -303,37 +313,44 @@ $$;
 
 
 -- 1c. Total cost grouped by account (backs /api/calls/total-cost).
+-- All-time voice cost, split by exactly which table/account owns each dollar:
+--   owners            -> vapi_call_logs,    where vapi_account = 'owners'
+--   secondary/unknown  -> vapi_call_logs_nf, where vapi_account = 'secondary' / 'unknown'
+-- (No date filter — this is a running lifetime total, not range-scoped.)
 create or replace function public.get_voice_total_cost()
 returns jsonb
 language sql
 stable
 as $$
-  with unioned as (
-    select coalesce(cost_usd, 0) as cost_usd, lower(coalesce(vapi_account, 'normal')) as vapi_account_raw
+  with owners_cost as (
+    select coalesce(sum(cost_usd), 0) as total
     from public.vapi_call_logs
-    union all
-    select coalesce(cost_usd, 0) as cost_usd, lower(coalesce(vapi_account, 'normal')) as vapi_account_raw
-    from public.vapi_call_logs_nf
+    where lower(coalesce(vapi_account, '')) in ('owner', 'owners')
   ),
-  normalized as (
-    select cost_usd,
-      case
-        when vapi_account_raw = 'secondary' then 'secondary'
-        when vapi_account_raw = 'unknown' then 'unknown'
-        when vapi_account_raw in ('owner', 'owners') then 'owners'
-        else 'normal'
-      end as vapi_account
-    from unioned
+  secondary_cost as (
+    select coalesce(sum(cost_usd), 0) as total
+    from public.vapi_call_logs_nf
+    where lower(coalesce(vapi_account, '')) = 'secondary'
+  ),
+  unknown_cost as (
+    select coalesce(sum(cost_usd), 0) as total
+    from public.vapi_call_logs_nf
+    where lower(coalesce(vapi_account, '')) = 'unknown'
+  ),
+  normal_cost as (
+    select coalesce(sum(cost_usd), 0) as total
+    from public.vapi_call_logs
+    where lower(coalesce(vapi_account, 'normal')) not in ('owner', 'owners', 'secondary', 'unknown')
   )
   select jsonb_build_object(
-    'total', coalesce(sum(cost_usd), 0),
-    'byAccount', coalesce(
-      (select jsonb_object_agg(vapi_account, total) from (
-        select vapi_account, sum(cost_usd) as total from normalized group by vapi_account
-      ) t), '{}'::jsonb
+    'total', (select total from owners_cost) + (select total from secondary_cost) + (select total from unknown_cost) + (select total from normal_cost),
+    'byAccount', jsonb_build_object(
+      'owners', (select total from owners_cost),
+      'secondary', (select total from secondary_cost),
+      'unknown', (select total from unknown_cost),
+      'normal', (select total from normal_cost)
     )
-  )
-  from normalized;
+  );
 $$;
 
 

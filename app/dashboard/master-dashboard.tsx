@@ -13,6 +13,7 @@ import {
     Maximize2,
     Minimize2,
     X,
+    Wallet,
 } from "lucide-react";
 import {
     AreaChart,
@@ -92,6 +93,7 @@ export default function MasterDashboard() {
     const [sourceStats, setSourceStats] = useState<SourceStats>({ intro: 0, intro_uk: 0, follow_up: 0, follow_up_uk: 0, leads: 0 });
     const [voiceBalance, setVoiceBalance] = useState<any>(null);
     const [didBalance, setDidBalance] = useState<any>(null);
+    const [voiceCosts, setVoiceCosts] = useState<{ totalAgentCost: number; secondaryAgentCost: number; unknownAgentCost: number; ownerAgentCost: number } | null>(null);
 
     useEffect(() => {
         if (!dateRange?.from) return;
@@ -103,11 +105,13 @@ export default function MasterDashboard() {
         Promise.all([
             fetchCached(`/api/dashboard/analytics?${q}`),
             fetch('/api/vapi/balance').then(r => r.ok ? r.json() : null),
-            fetch('/api/did/balance').then(r => r.ok ? r.json() : null)
-        ]).then(([analyticsData, vapiData, didData]) => {
+            fetch('/api/did/balance').then(r => r.ok ? r.json() : null),
+            fetch('/api/calls/total-cost').then(r => r.ok ? r.json() : null)
+        ]).then(([analyticsData, vapiData, didData, costData]) => {
             setAnalytics(analyticsData);
             if (vapiData) setVoiceBalance(vapiData);
             if (didData) setDidBalance(didData);
+            if (costData) setVoiceCosts(costData);
         }).catch(err => console.error("Analytics fetch error:", err))
         .finally(() => setLoading(false));
     }, [dateRange]);

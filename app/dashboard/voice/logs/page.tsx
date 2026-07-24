@@ -170,6 +170,14 @@ function VoiceLogsContent() {
     const itemsPerPage = 10;
     const sharedCallHandled = useRef(false);
 
+    const [exportDialogOpen, setExportDialogOpen] = useState(false);
+    const [exportDateRange, setExportDateRange] = useState<any>({
+        from: subDays(new Date(), 7),
+        to: new Date(),
+    });
+    const [exportVoiceStatus, setExportVoiceStatus] = useState("all");
+    const [exporting, setExporting] = useState(false);
+
     // Auto-open modal when ?call=<id> is in the URL
     useEffect(() => {
         const callId = searchParams.get("call");
@@ -257,40 +265,85 @@ function VoiceLogsContent() {
         fetchLogs();
     };
 
-    const handleDownloadExcel = () => {
-        if (!calls || calls.length === 0) return;
+    const handleDownloadExcel = async () => {
+        if (!exportDateRange?.from) return;
+        setExporting(true);
+        try {
+            const params = new URLSearchParams();
+            params.set('from', exportDateRange.from.toISOString());
+            params.set('to', (exportDateRange.to || exportDateRange.from).toISOString());
+            if (exportVoiceStatus !== 'all') params.set('voiceStatus', exportVoiceStatus);
+            params.set('account', 'all');
+            params.set('sort', 'newest');
 
-        // CSV Header
-        const headers = ["Name", "Guest Number", "Type", "Duration", "Country", "Cost", "Voice Status", "Status", "Date & Time", "Notes"];
-        
-        // CSV Rows
-        const rows = calls.map(c => [
-            `"${(c.name || "Guest").replace(/"/g, '""')}"`,
-            `"${(c.phone || "Unknown").replace(/"/g, '""')}"`,
-            `"${(c.type || (c.isInbound ? "Inbound" : "Outbound")).replace(/"/g, '""')}"`,
-            `"${formatDuration(c.durationSeconds || 0)}"`,
-            `"${(c.country || "Unknown").replace(/"/g, '""')}"`,
-            `"${(c.cost || "$0.00").replace(/"/g, '""')}"`,
-            `"${(c.voiceCallStatus || "N/A").replace(/"/g, '""')}"`,
-            `"${(c.status || "Unknown").replace(/"/g, '""')}"`,
-            `"${(c.displayDate || "N/A").replace(/"/g, '""')}"`,
-            `"${(c.note || "").replace(/"/g, '""')}"`
-        ]);
+            // Pull every matching row, not just the current on-screen page — RPC caps
+            // page size at 1000, so loop pages until we've fetched the reported total.
+            const pageSize = 1000;
+            let page = 1;
+            let all: any[] = [];
+            let total = Infinity;
 
-        const csvContent = [
-            headers.join(","),
-            ...rows.map(r => r.join(","))
-        ].join("\n");
+            while (all.length < total) {
+                params.set('page', String(page));
+                params.set('pageSize', String(pageSize));
+                const res = await fetch(`/api/calls/logs?${params.toString()}`);
+                if (!res.ok) throw new Error("Export fetch failed");
+                const data = await res.json();
+                const batch = data.calls || [];
+                all = all.concat(batch);
+                total = data.total || 0;
+                if (batch.length === 0) break;
+                page++;
+            }
 
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.setAttribute("href", url);
-        link.setAttribute("download", `voice_logs_${format(new Date(), 'yyyy-MM-dd')}.csv`);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+            if (all.length === 0) {
+                setExporting(false);
+                setExportDialogOpen(false);
+                return;
+            }
+
+            const headers = ["Name", "Guest Number", "Type", "Duration", "Country", "Cost", "Voice Status", "Status", "Date & Time", "Notes"];
+
+            const rows = all.map((c: any) => {
+                const displayDate = c.startedAt ? format(new Date(c.startedAt), 'PPp') : 'N/A';
+                return [
+                    `"${(c.customerName || "Guest").replace(/"/g, '""')}"`,
+                    `"${(c.customerPhone || "Unknown").replace(/"/g, '""')}"`,
+                    `"${(c.isInbound ? "Inbound" : "Outbound").replace(/"/g, '""')}"`,
+                    `"${formatDuration(c.durationSeconds || 0)}"`,
+                    `"${(c.country || "Unknown").replace(/"/g, '""')}"`,
+                    `"${`$${Number(c.costUsd || 0).toFixed(3)}`}"`,
+                    `"${(c.voiceCallStatus || "N/A").replace(/"/g, '""')}"`,
+                    `"${(c.status || "Unknown").replace(/"/g, '""')}"`,
+                    `"${displayDate}"`,
+                    `"${(c.note || "").replace(/"/g, '""')}"`
+                ];
+            });
+
+            const csvContent = [
+                headers.join(","),
+                ...rows.map(r => r.join(","))
+            ].join("\n");
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            const fromLabel = format(exportDateRange.from, 'yyyy-MM-dd');
+            const toLabel = format(exportDateRange.to || exportDateRange.from, 'yyyy-MM-dd');
+            const voiceStatusSlug = exportVoiceStatus !== 'all' ? `_${exportVoiceStatus.toLowerCase().replace(/\s+/g, '-')}` : '';
+            link.setAttribute("download", `voice_logs_${fromLabel}_to_${toLabel}${voiceStatusSlug}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            setExportDialogOpen(false);
+        } catch (err) {
+            console.error("Failed to export call logs", err);
+        } finally {
+            setExporting(false);
+        }
     };
 
     useEffect(() => {
@@ -356,11 +409,10 @@ function VoiceLogsContent() {
                     <div className="flex items-center gap-3">
                         
                         <DateRangePicker onUpdate={(values) => setDateRange(values.range)} />
-                        <Button 
-                            variant="outline" 
+                        <Button
+                            variant="outline"
                             className="bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100"
-                            onClick={handleDownloadExcel}
-                            disabled={loading || calls.length === 0}
+                            onClick={() => setExportDialogOpen(true)}
                         >
                             <FileSpreadsheet className="h-4 w-4 mr-2" />
                             Download Excel
@@ -507,6 +559,60 @@ function VoiceLogsContent() {
             </Card>
 
             <CallDetailsModal open={modalOpen} onOpenChange={setModalOpen} call={selectedCall} />
+
+            {/* Export Dialog */}
+            <Dialog open={exportDialogOpen} onOpenChange={(open) => { if (!exporting) setExportDialogOpen(open); }}>
+                <DialogContent className="sm:max-w-[440px] bg-white border-slate-200 shadow-xl overflow-hidden p-0">
+                    <DialogHeader className="p-6 bg-slate-50 border-b border-slate-100">
+                        <DialogTitle className="flex items-center gap-2 text-xl font-bold text-slate-900">
+                            <div className="p-2 rounded-lg bg-emerald-100 text-emerald-600">
+                                <FileSpreadsheet className="h-5 w-5" />
+                            </div>
+                            Export Call Logs
+                        </DialogTitle>
+                        <DialogDescription className="text-slate-500">
+                            Choose a time period and status — the full matching dataset will be downloaded, not just the current page.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="p-6 space-y-5">
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Time Period</label>
+                            <DateRangePicker onUpdate={(values) => setExportDateRange(values.range)} />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Voice Status</label>
+                            <Select value={exportVoiceStatus} onValueChange={setExportVoiceStatus}>
+                                <SelectTrigger className="w-full h-9"><SelectValue placeholder="Voice Status" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Voice Status</SelectItem>
+                                    <SelectItem value="did not answer">Did Not Answer</SelectItem>
+                                    <SelectItem value="Contacted">Contacted</SelectItem>
+                                    <SelectItem value="Awaiting Availability">Awaiting Availability</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                    <DialogFooter className="p-6 bg-slate-50 border-t border-slate-100">
+                        <Button
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-100"
+                            onClick={handleDownloadExcel}
+                            disabled={exporting || !exportDateRange?.from}
+                        >
+                            {exporting ? (
+                                <>
+                                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                                    Preparing Export...
+                                </>
+                            ) : (
+                                <>
+                                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                                    Download CSV
+                                </>
+                            )}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Cost Info Modal */}
             <Dialog open={costModalOpen} onOpenChange={setCostModalOpen}>

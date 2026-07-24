@@ -154,6 +154,17 @@ const getMsgDateWithFallback = (lead: any, msgKey: string, tsKey?: string) => {
     return null;
 };
 
+// Lifetime messages-sent count for a single lead — the same logic the table's
+// "Messages Sent" column uses. Kept as one shared function so the per-lead column
+// and the aggregate "Messages Sent" metric card never disagree.
+const getLeadSentCount = (lead: any) => {
+    let count = 0;
+    for (let i = 1; i <= 12; i++) { if (lead[`W.P_${i}`] || lead.stage_data?.[`WhatsApp ${i}`]) count++; }
+    if (lead["W.P_FollowUp"] || lead.stage_data?.["WhatsApp FollowUp"]) count++;
+    for (let i = 1; i <= 10; i++) { if (lead[`W.P_FollowUp_${i}`]) count++; }
+    return count;
+};
+
 const getLeadLatestActivity = (lead: any) => {
     let latestDate = new Date(lead.created_at);
 
@@ -440,48 +451,19 @@ export default function WhatsappChatPage() {
         let failedCount = 0;
         let uniqueSentCount = 0;
 
-        const from = dateRange?.from ? startOfDay(new Date(dateRange.from)) : null;
-        const to = endOfDay(new Date(dateRange?.to || dateRange?.from || new Date()));
-
-        const isWithin = (d: Date | null) => {
-            if (!from || !to) return true;
-            if (!d) return false;
-            return d >= from && d <= to;
-        };
-
         filteredLeads.forEach(l => {
             const lead = l as any;
-            let leadHadSentInRange = false;
+
+            // Same lifetime per-lead count the table's "Messages Sent" column shows —
+            // keeps the metric card and the table in agreement.
+            const leadSentCount = getLeadSentCount(lead);
+            sentCount += leadSentCount;
+            if (leadSentCount > 0) uniqueSentCount++;
 
             for (let i = 1; i <= 12; i++) {
                 const tsValue = lead[`W.P_${i} TS`];
-                if (tsValue && String(tsValue).toLowerCase().includes("failed")) {
-                    const d = getMsgDateWithFallback(lead, `W.P_${i}`);
-                    if (isWithin(d)) failedCount++;
-                }
+                if (tsValue && String(tsValue).toLowerCase().includes("failed")) failedCount++;
             }
-
-            for (let i = 1; i <= 12; i++) {
-                const d = getMsgDateWithFallback(lead, `W.P_${i}`);
-                if (d && isWithin(d)) {
-                    sentCount++;
-                    leadHadSentInRange = true;
-                }
-            }
-            const fup = getMsgDateWithFallback(lead, "W.P_FollowUp", "W.P_FollowUp TS");
-            if (fup && isWithin(fup)) {
-                sentCount++;
-                leadHadSentInRange = true;
-            }
-            for (let i = 1; i <= 10; i++) {
-                const df = getMsgDateWithFallback(lead, `W.P_FollowUp_${i}`, `w_p_followup_ts_${i}`);
-                if (df && isWithin(df)) {
-                    sentCount++;
-                    leadHadSentInRange = true;
-                }
-            }
-
-            if (leadHadSentInRange) uniqueSentCount++;
 
             const rt = lead.WP_Replied_track;
             if (rt && String(rt).trim() !== "" && String(rt).trim().toLowerCase() !== "no" && String(rt).trim().toLowerCase() !== "none") {
@@ -499,7 +481,7 @@ export default function WhatsappChatPage() {
             failedCount,
             responseRate,
         };
-    }, [filteredLeads, dateRange]);
+    }, [filteredLeads]);
 
     const handleResetFilters = () => {
         setActiveFilters({ replyStatus: [], messageStatus: [] });
@@ -888,10 +870,7 @@ function CustomerRow({ lead: leadRaw, onClick }: { lead: ConsolidatedLead; onCli
     const lead = leadRaw as any;
     const latestDate = getLeadLatestActivity(lead);
 
-    let sentCount = 0;
-    for (let i = 1; i <= 12; i++) { if (lead[`W.P_${i}`] || lead.stage_data?.[`WhatsApp ${i}`]) sentCount++; }
-    if (lead["W.P_FollowUp"] || lead.stage_data?.["WhatsApp FollowUp"]) sentCount++;
-    for (let i = 1; i <= 10; i++) { if (lead[`W.P_FollowUp_${i}`]) sentCount++; }
+    const sentCount = getLeadSentCount(lead);
 
     const allStatuses = [];
     for (let i = 1; i <= 12; i++) {

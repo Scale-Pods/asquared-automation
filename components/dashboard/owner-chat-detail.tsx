@@ -13,6 +13,7 @@ import {
     Mic,
 } from "lucide-react";
 import { buildOwnerTimeline } from "@/lib/master-leads-utils";
+import { parseMessageStatus } from "@/lib/message-status";
 
 interface OwnerChatDetailProps {
     owner: any;
@@ -98,18 +99,25 @@ export function OwnerChatDetail({ owner, onClose }: OwnerChatDetailProps) {
                             messages.map((msg, idx) => {
                                 let tsPill: React.ReactNode = null;
                                 if (msg.type === 'bot' && msg.tsStatus) {
-                                    const raw = String(msg.tsStatus);
-                                    const label = raw.split(' - ')[0].trim();
-                                    const formatted = label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
-                                    let cls = 'bg-emerald-500/30 text-emerald-100';
-                                    if (formatted.includes('Read')) cls = 'bg-blue-400/40 text-blue-100';
-                                    if (formatted.includes('Failed')) cls = 'bg-red-400/40 text-red-100';
-                                    if (formatted.includes('Sent')) cls = 'bg-white/20 text-emerald-50';
-                                    tsPill = (
-                                        <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${cls}`}>
-                                            {formatted}
-                                        </span>
-                                    );
+                                    // Providers send a whole sentence on failure; the pill must stay
+                                    // one word or it breaks the bubble. Detail goes in the tooltip.
+                                    const parsed = parseMessageStatus(String(msg.tsStatus));
+                                    if (parsed) {
+                                        const { label, detail, timestamp } = parsed;
+                                        let cls = 'bg-emerald-500/30 text-emerald-100';
+                                        if (label === 'Read') cls = 'bg-blue-400/40 text-blue-100';
+                                        if (label === 'Failed') cls = 'bg-red-400/40 text-red-100';
+                                        if (label === 'Sent') cls = 'bg-white/20 text-emerald-50';
+                                        const tip = [detail, timestamp].filter(Boolean).join(' — ');
+                                        tsPill = (
+                                            <span
+                                                title={tip || undefined}
+                                                className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full whitespace-nowrap ${tip ? 'cursor-help' : ''} ${cls}`}
+                                            >
+                                                {label}
+                                            </span>
+                                        );
+                                    }
                                 }
 
                                 return (

@@ -44,6 +44,7 @@ import type { ConsolidatedLead } from "@/lib/leads-utils";
 import { subDays, startOfDay, endOfDay } from "date-fns";
 import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react";
 import { OwnerChatDetail } from "@/components/dashboard/owner-chat-detail";
+import { parseMessageStatus } from "@/lib/message-status";
 
 const parseMsg = (raw: any): { date: Date | null, content: string } => {
     if (!raw || !String(raw).trim()) return { date: null, content: "" };
@@ -946,25 +947,9 @@ function CustomerRow({ lead: leadRaw, onClick }: { lead: ConsolidatedLead; onCli
 }
 
 function MessageStatusBadge({ index, status }: { index: number, status: string }) {
-    if (!status) return null;
-
-    const isIsoTs = /^\d{4}-\d{2}-\d{2}T/.test(status.trim());
-    // Nurture format: "SENT at Jun 05 2026, 04:10 PM" — extract status word before " at"
-    const isNurtureTs = !isIsoTs && /\bat\s+[A-Za-z]+\s+\d{1,2}\s+\d{4}/i.test(status.trim());
-    const parts = (isIsoTs || isNurtureTs) ? [] : status.split(' - ');
-    let statusText: string;
-    let rawTimestamp: string;
-    if (isIsoTs) {
-        statusText = 'Sent';
-        rawTimestamp = status.trim();
-    } else if (isNurtureTs) {
-        const atIdx = status.toLowerCase().indexOf(' at ');
-        statusText = atIdx > 0 ? status.slice(0, atIdx).trim() : status.trim();
-        rawTimestamp = status.trim();
-    } else {
-        statusText = parts[0].trim();
-        rawTimestamp = parts.length > 1 ? parts[1].trim() : '';
-    }
+    const parsed = parseMessageStatus(status);
+    if (!parsed) return null;
+    const { label, detail, timestamp } = parsed;
 
     const formatTooltipDate = (dateStr: string) => {
         const d = new Date(dateStr.replace(/(\d{1,2})\/(\d{1,2})\/(\d{4})/, '$3-$2-$1'));
@@ -975,11 +960,12 @@ function MessageStatusBadge({ index, status }: { index: number, status: string }
         return finalDate.toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     };
 
-    const formatted = statusText.charAt(0).toUpperCase() + statusText.slice(1).toLowerCase();
     let badgeClass = "bg-slate-100 text-slate-600 border-slate-200";
-    if (formatted.includes("Delivered")) badgeClass = "bg-emerald-50 text-emerald-700 border-emerald-100";
-    if (formatted.includes("Read")) badgeClass = "bg-blue-50 text-blue-700 border-blue-100";
-    if (formatted.includes("Failed")) badgeClass = "bg-red-50 text-red-700 border-red-100";
+    if (label === "Delivered") badgeClass = "bg-emerald-50 text-emerald-700 border-emerald-100";
+    if (label === "Read") badgeClass = "bg-blue-50 text-blue-700 border-blue-100";
+    if (label === "Failed") badgeClass = "bg-red-50 text-red-700 border-red-100";
+
+    const hasTooltip = !!(detail || timestamp);
 
     return (
         <TooltipProvider>
@@ -987,11 +973,14 @@ function MessageStatusBadge({ index, status }: { index: number, status: string }
                 <TooltipTrigger asChild>
                     <div className="flex items-center gap-1.5 w-full justify-center cursor-help">
                         <span className="text-[9px] text-slate-400 font-mono select-none">{index}</span>
-                        <Badge variant="outline" className={`h-5 px-1.5 text-[9px] font-bold uppercase tracking-wider ${badgeClass}`}>{formatted}</Badge>
+                        <Badge variant="outline" className={`h-5 px-1.5 text-[9px] font-bold uppercase tracking-wider whitespace-nowrap ${badgeClass}`}>{label}</Badge>
                     </div>
                 </TooltipTrigger>
-                {rawTimestamp && (
-                    <TooltipContent side="top" className="bg-slate-800/40 backdrop-blur-md text-white text-[10px] border-none px-2 py-1 shadow-xl">{formatTooltipDate(rawTimestamp)}</TooltipContent>
+                {hasTooltip && (
+                    <TooltipContent side="top" className="bg-slate-800/90 backdrop-blur-md text-white text-[10px] border-none px-2.5 py-1.5 shadow-xl max-w-[280px] whitespace-normal break-words">
+                        {detail && <div className="leading-snug">{detail}</div>}
+                        {timestamp && <div className={detail ? "mt-1 text-slate-300" : ""}>{formatTooltipDate(timestamp)}</div>}
+                    </TooltipContent>
                 )}
             </Tooltip>
         </TooltipProvider>

@@ -14,6 +14,7 @@ import {
     Check
 } from "lucide-react";
 import { ConsolidatedLead } from "@/lib/leads-utils";
+import { parseMessageStatus } from "@/lib/message-status";
 
 interface WhatsAppChatDetailProps {
     customerId: string;
@@ -260,25 +261,26 @@ export function WhatsAppChatDetail({ customerId, onClose }: WhatsAppChatDetailPr
                                 // Build delivery-status pill for outgoing messages
                                 let tsPill: React.ReactNode = null;
                                 if (msg.type === 'bot' && (msg as any).tsStatus) {
-                                    const raw = String((msg as any).tsStatus);
-                                    const label = raw.split(' - ')[0].trim();
-                                    // Handle status strings like "SENT at Jun 05 2026..." or "DELIVERED at ..."
-                                    let statusWord = label;
-                                    const atIdx = label.toLowerCase().indexOf(' at');
-                                    if (atIdx > 0) {
-                                        statusWord = label.slice(0, atIdx).trim();
+                                    // Providers send a whole sentence on failure; the pill must stay
+                                    // one word or it breaks the bubble. Detail goes in the tooltip.
+                                    const parsed = parseMessageStatus(String((msg as any).tsStatus));
+                                    if (parsed) {
+                                        const { label, detail, timestamp } = parsed;
+                                        let cls = 'bg-emerald-500/30 text-emerald-100';
+                                        if (label === 'Read') cls = 'bg-blue-400/40 text-blue-100';
+                                        if (label === 'Failed') cls = 'bg-red-400/40 text-red-100';
+                                        if (label === 'Sent') cls = 'bg-emerald-500/40 text-emerald-100';
+                                        if (label === 'Delivered') cls = 'bg-teal-500/30 text-teal-100';
+                                        const tip = [detail, timestamp].filter(Boolean).join(' — ');
+                                        tsPill = (
+                                            <span
+                                                title={tip || undefined}
+                                                className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full whitespace-nowrap ${tip ? 'cursor-help' : ''} ${cls}`}
+                                            >
+                                                {label}
+                                            </span>
+                                        );
                                     }
-                                    const formatted = statusWord.charAt(0).toUpperCase() + statusWord.slice(1).toLowerCase();
-                                    let cls = 'bg-emerald-500/30 text-emerald-100';
-                                    if (formatted.includes('Read')) cls = 'bg-blue-400/40 text-blue-100';
-                                    if (formatted.includes('Failed')) cls = 'bg-red-400/40 text-red-100';
-                                    if (formatted.includes('Sent')) cls = 'bg-emerald-500/40 text-emerald-100';
-                                    if (formatted.includes('Delivered')) cls = 'bg-teal-500/30 text-teal-100';
-                                    tsPill = (
-                                        <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${cls}`}>
-                                            {formatted}
-                                        </span>
-                                    );
                                 }
 
                                 return (
